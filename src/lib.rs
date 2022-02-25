@@ -9,7 +9,7 @@ use crate::rand::prelude::*;
 #[pyclass]
 pub struct GaugeTheory {
     graph: NDDualGraph,
-    rng: SmallRng,
+    rng: Option<SmallRng>,
 }
 
 #[pymethods]
@@ -21,9 +21,9 @@ impl GaugeTheory {
         seed: Option<u64>
     ) -> Self {
         let rng = if let Some(seed) = seed {
-            SmallRng::seed_from_u64(seed)
+            Some(SmallRng::seed_from_u64(seed))
         } else {
-            SmallRng::from_entropy()
+            None
         };
         Self {
             graph: NDDualGraph::new(t, x, y, z, vs),
@@ -32,7 +32,7 @@ impl GaugeTheory {
     }
 
     fn run_local_update(&mut self) {
-        self.graph.local_update_sweep(&mut self.rng)
+        self.graph.local_update_sweep(self.rng.as_mut())
     }
 
     fn add_flux(&mut self, t: usize, x: usize, y: usize, z: usize, p: usize, amount: Option<i32>) {
