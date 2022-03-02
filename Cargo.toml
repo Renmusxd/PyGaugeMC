@@ -4,6 +4,10 @@ version = "0.1.0"
 authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2021"
 
+[features]
+default = ["gpu-wgpu"]
+gpu-wgpu = ["gaugemc/gpu-wgpu", "pollster"]
+
 [lib]
 name = "py_gauge_mc"
 crate-type = ["cdylib"]
@@ -14,7 +18,11 @@ codegen-units = 1
 panic = "abort"
 
 [dependencies]
-gaugemc = {path = "../GaugeTheoryMC"}
+pollster = {version="^0.2",optional=true }
+
+[dependencies.gaugemc]
+path = "../GaugeTheoryMC"
+features = ["gpu-wgpu"]
 
 [dependencies.pyo3]
 version = ">=0.15"
@@ -22,8 +30,3 @@ features = ["extension-module"]
 
 [dependencies.numpy]
 version = ">=0.15"
-features = ["rayon"]
-
-[dependencies.ndarray]
-version = "*"
-features = ["rayon"]
