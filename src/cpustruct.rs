@@ -102,7 +102,12 @@ impl GaugeTheory {
         sum.into_pyarray(py).to_owned()
     }
 
-    fn simulate_and_get_winding_variance(&mut self, py: Python, num_steps: usize, local_updates_per_step: Option<usize>) -> Py<PyArray1<f64>> {
+    fn simulate_and_get_winding_variance(
+        &mut self,
+        py: Python,
+        num_steps: usize,
+        local_updates_per_step: Option<usize>,
+    ) -> Py<PyArray1<f64>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
 
         let mut sum_squares = Array1::<f64>::zeros((6,));
@@ -111,11 +116,16 @@ impl GaugeTheory {
                 self.graph.local_update_sweep(self.rng.as_mut());
             }
             self.graph.global_update_sweep(self.rng.as_mut());
-            sum_squares.iter_mut().zip(self.get_winding_num_native().into_iter()).for_each(|(s,w)| {
-                *s += w.pow(2) as f64;
-            });
+            sum_squares
+                .iter_mut()
+                .zip(self.get_winding_num_native().into_iter())
+                .for_each(|(s, w)| {
+                    *s += w.pow(2) as f64;
+                });
         }
-        sum_squares.iter_mut().for_each(|s| *s /= (num_steps as f64));
+        sum_squares
+            .iter_mut()
+            .for_each(|s| *s /= (num_steps as f64));
         sum_squares.into_pyarray(py).to_owned()
     }
 }
@@ -123,11 +133,26 @@ impl GaugeTheory {
 impl GaugeTheory {
     fn get_winding_num_native(&self) -> Array1<i32> {
         let bounds = self.graph.get_bounds();
-        let mut sum = self.graph.graph_state().sum_axis(Axis(0)).sum_axis(Axis(0)).sum_axis(Axis(0)).sum_axis(Axis(0));
-        let plane_sizes = [bounds.t*bounds.x, bounds.t*bounds.y, bounds.t*bounds.z, bounds.x*bounds.y,bounds.x*bounds.z,bounds.y*bounds.z];
-        sum.iter_mut().zip(plane_sizes.into_iter()).for_each(|(s,n)| {
-            *s /= n as i32;
-        });
+        let mut sum = self
+            .graph
+            .graph_state()
+            .sum_axis(Axis(0))
+            .sum_axis(Axis(0))
+            .sum_axis(Axis(0))
+            .sum_axis(Axis(0));
+        let plane_sizes = [
+            bounds.t * bounds.x,
+            bounds.t * bounds.y,
+            bounds.t * bounds.z,
+            bounds.x * bounds.y,
+            bounds.x * bounds.z,
+            bounds.y * bounds.z,
+        ];
+        sum.iter_mut()
+            .zip(plane_sizes.into_iter())
+            .for_each(|(s, n)| {
+                *s /= n as i32;
+            });
         sum
     }
 }
