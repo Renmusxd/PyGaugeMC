@@ -79,7 +79,8 @@ impl GaugeTheory {
     }
 
     fn get_global_updates(&mut self) -> Vec<i8> {
-        let choices = self.graph.get_global_choices(self.rng.as_mut());
+        let mut choices = vec![0; self.graph.num_planes()];
+        self.graph.get_global_choices(&mut choices, self.rng.as_mut());
         choices
     }
 

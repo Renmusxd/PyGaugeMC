@@ -1,6 +1,5 @@
 use gaugemc::rand::prelude::*;
 use gaugemc::*;
-use numpy::ndarray::parallel::prelude::*;
 use numpy::ndarray::{Array, Array1, Array4, Array5, Axis};
 use numpy::{IntoPyArray, PyArray1, PyArray5};
 use pyo3::exceptions::PyValueError;
