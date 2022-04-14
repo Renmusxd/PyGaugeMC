@@ -21,7 +21,7 @@ panic = "abort"
 pollster = {version="^0.2",optional=true }
 
 [dependencies.gaugemc]
-path = "../GaugeTheoryMC"
+git = "https://github.com/Renmusxd/GaugeMC"
 features = ["gpu-wgpu"]
 
 [dependencies.pyo3]
