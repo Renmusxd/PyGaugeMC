@@ -1,6 +1,6 @@
 use gaugemc::rand::prelude::*;
 use gaugemc::*;
-use numpy::ndarray::{Array, Array1, Array4, Array5, Axis};
+use numpy::ndarray::{Array1, Array5, Axis};
 use numpy::{IntoPyArray, PyArray1, PyArray5};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -17,15 +17,12 @@ pub struct GPUGaugeTheory {
 impl GPUGaugeTheory {
     /// Construct a new instance.
     #[new]
-    fn new(t: usize, x: usize, y: usize, z: usize, vs: Vec<f32>, seed: Option<u64>) -> Self {
-        let rng = if let Some(seed) = seed {
-            Some(SmallRng::seed_from_u64(seed))
-        } else {
-            None
-        };
+    fn new(t: usize, x: usize, y: usize, z: usize, vs: Vec<f32>, seed: Option<u64>) -> PyResult<Self> {
+        let rng = seed.map(SmallRng::seed_from_u64);
         let bounds = SiteIndex { t, x, y, z };
-        let graph = pollster::block_on(gaugemc::GPUBackend::new_async(t, x, y, z, vs, seed));
-        Self { bounds, graph, rng }
+        pollster::block_on(gaugemc::GPUBackend::new_async(t, x, y, z, vs, seed))
+            .map_err(PyValueError::new_err)
+            .map(|graph| Self { bounds, graph, rng })
     }
 
     fn run_local_update(&mut self, num_updates: Option<usize>) {
@@ -44,7 +41,7 @@ impl GPUGaugeTheory {
 
     fn get_graph_state(&mut self, py: Python) -> PyResult<Py<PyArray5<i32>>> {
         self.get_state_native()
-            .map_err(|s| PyValueError::new_err(s))
+            .map_err(PyValueError::new_err)
             .map(|state| state.into_pyarray(py).to_owned())
     }
 
@@ -56,7 +53,7 @@ impl GPUGaugeTheory {
         // sum t, x, y, z
         let sum = self
             .get_winding_num_native()
-            .map_err(|s| PyValueError::new_err(s))?;
+            .map_err(PyValueError::new_err)?;
         Ok(sum.into_pyarray(py).to_owned())
     }
 
@@ -74,7 +71,7 @@ impl GPUGaugeTheory {
             self.run_global_update();
             let windings = self
                 .get_winding_num_native()
-                .map_err(|s| PyValueError::new_err(s))?;
+                .map_err(PyValueError::new_err)?;
             sum_squares
                 .iter_mut()
                 .zip(windings.into_iter())
@@ -84,7 +81,7 @@ impl GPUGaugeTheory {
         }
         sum_squares
             .iter_mut()
-            .for_each(|s| *s /= (num_steps as f64));
+            .for_each(|s| *s /= num_steps as f64);
         Ok(sum_squares.into_pyarray(py).to_owned())
     }
 }

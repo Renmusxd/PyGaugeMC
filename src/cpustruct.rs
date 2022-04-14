@@ -2,6 +2,7 @@ use gaugemc::rand::prelude::*;
 use gaugemc::*;
 use numpy::ndarray::{Array1, Array4, Axis};
 use numpy::{IntoPyArray, PyArray1, PyArray5};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 /// Unlike the Lattice class this maintains a set of graphs with internal state.
@@ -15,16 +16,18 @@ pub struct GaugeTheory {
 impl GaugeTheory {
     /// Construct a new instance.
     #[new]
-    fn new(t: usize, x: usize, y: usize, z: usize, vs: Vec<f64>, seed: Option<u64>) -> Self {
-        let rng = if let Some(seed) = seed {
-            Some(SmallRng::seed_from_u64(seed))
-        } else {
-            None
-        };
-        Self {
-            graph: NDDualGraph::new(t, x, y, z, vs),
-            rng,
-        }
+    fn new(
+        t: usize,
+        x: usize,
+        y: usize,
+        z: usize,
+        vs: Vec<f64>,
+        seed: Option<u64>,
+    ) -> PyResult<Self> {
+        let rng = seed.map(SmallRng::seed_from_u64);
+        NDDualGraph::new(t, x, y, z, vs)
+            .map_err(PyValueError::new_err)
+            .map(|graph| Self { graph, rng })
     }
 
     fn get_bounds(&self) -> (usize, usize, usize, usize) {
@@ -80,7 +83,8 @@ impl GaugeTheory {
 
     fn get_global_updates(&mut self) -> Vec<i8> {
         let mut choices = vec![0; self.graph.num_planes()];
-        self.graph.get_global_choices(&mut choices, self.rng.as_mut());
+        self.graph
+            .get_global_choices(&mut choices, self.rng.as_mut());
         choices
     }
 
@@ -126,7 +130,7 @@ impl GaugeTheory {
         }
         sum_squares
             .iter_mut()
-            .for_each(|s| *s /= (num_steps as f64));
+            .for_each(|s| *s /= num_steps as f64);
         sum_squares.into_pyarray(py).to_owned()
     }
 }
