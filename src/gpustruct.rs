@@ -1,7 +1,7 @@
 use gaugemc::rand::prelude::*;
 use gaugemc::*;
-use numpy::ndarray::{Array1, Array5, Axis};
-use numpy::{IntoPyArray, PyArray1, PyArray5};
+use numpy::ndarray::{Array1, Array2, Array5, Axis};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray5};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -17,7 +17,14 @@ pub struct GPUGaugeTheory {
 impl GPUGaugeTheory {
     /// Construct a new instance.
     #[new]
-    fn new(t: usize, x: usize, y: usize, z: usize, vs: Vec<f32>, seed: Option<u64>) -> PyResult<Self> {
+    fn new(
+        t: usize,
+        x: usize,
+        y: usize,
+        z: usize,
+        vs: Vec<f32>,
+        seed: Option<u64>,
+    ) -> PyResult<Self> {
         let rng = seed.map(SmallRng::seed_from_u64);
         let bounds = SiteIndex { t, x, y, z };
         pollster::block_on(gaugemc::GPUBackend::new_async(t, x, y, z, vs, seed))
@@ -57,18 +64,24 @@ impl GPUGaugeTheory {
         Ok(sum.into_pyarray(py).to_owned())
     }
 
+    /// Take `num_samples` of the winding numbers for each plane and calculate the sum of squares
+    /// divides by the number of samples.
     fn simulate_and_get_winding_variance(
         &mut self,
         py: Python,
-        num_steps: usize,
+        num_samples: usize,
         local_updates_per_step: Option<usize>,
+        steps_per_sample: Option<usize>,
     ) -> PyResult<Py<PyArray1<f64>>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
+        let steps_per_sample = steps_per_sample.unwrap_or(1);
 
         let mut sum_squares = Array1::<f64>::zeros((6,));
-        for _ in 0..num_steps {
-            self.run_local_update(Some(local_updates_per_step));
-            self.run_global_update();
+        for _ in 0..num_samples {
+            for _ in 0..steps_per_sample {
+                self.run_local_update(Some(local_updates_per_step));
+                self.run_global_update();
+            }
             let windings = self
                 .get_winding_num_native()
                 .map_err(PyValueError::new_err)?;
@@ -81,8 +94,36 @@ impl GPUGaugeTheory {
         }
         sum_squares
             .iter_mut()
-            .for_each(|s| *s /= num_steps as f64);
+            .for_each(|s| *s /= num_samples as f64);
         Ok(sum_squares.into_pyarray(py).to_owned())
+    }
+
+    fn simulate_and_get_winding_nums(
+        &mut self,
+        py: Python,
+        num_samples: usize,
+        local_updates_per_step: Option<usize>,
+        steps_per_sample: Option<usize>,
+    ) -> PyResult<Py<PyArray2<i32>>> {
+        let local_updates_per_step = local_updates_per_step.unwrap_or(1);
+        let steps_per_sample = steps_per_sample.unwrap_or(1);
+
+        let mut windings = Array2::<i32>::zeros((num_samples, 6));
+        windings
+            .axis_iter_mut(Axis(0))
+            .try_for_each(|mut windings_row| -> Result<(), String> {
+                for _ in 0..steps_per_sample {
+                    self.run_local_update(Some(local_updates_per_step));
+                    self.run_global_update();
+                }
+                windings_row
+                    .iter_mut()
+                    .zip(self.get_winding_num_native()?)
+                    .for_each(|(w, v)| *w = v);
+                Ok(())
+            })
+            .map_err(PyValueError::new_err)?;
+        Ok(windings.into_pyarray(py).to_owned())
     }
 }
 
