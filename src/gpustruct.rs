@@ -1,7 +1,7 @@
 use gaugemc::rand::prelude::*;
 use gaugemc::*;
 use numpy::ndarray::{Array1, Array2, Array5, Axis};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray5};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray5, PyReadonlyArray5};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -23,13 +23,23 @@ impl GPUGaugeTheory {
         y: usize,
         z: usize,
         vs: Vec<f32>,
+        initial_state: Option<PyReadonlyArray5<i32>>,
         seed: Option<u64>,
     ) -> PyResult<Self> {
         let rng = seed.map(SmallRng::seed_from_u64);
+        let initial_state = initial_state.map(|state| state.to_owned_array());
         let bounds = SiteIndex { t, x, y, z };
-        pollster::block_on(gaugemc::GPUBackend::new_async(t, x, y, z, vs, seed))
-            .map_err(PyValueError::new_err)
-            .map(|graph| Self { bounds, graph, rng })
+        pollster::block_on(gaugemc::GPUBackend::new_async(
+            t,
+            x,
+            y,
+            z,
+            vs,
+            initial_state,
+            seed,
+        ))
+        .map_err(PyValueError::new_err)
+        .map(|graph| Self { bounds, graph, rng })
     }
 
     fn run_local_update(&mut self, num_updates: Option<usize>) {
