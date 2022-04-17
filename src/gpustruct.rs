@@ -1,6 +1,6 @@
 use gaugemc::rand::prelude::*;
 use gaugemc::*;
-use numpy::ndarray::{Array1, Array2, Array5, Axis};
+use numpy::ndarray::{Array1, Array2, Axis};
 use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray5, PyReadonlyArray5};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -56,22 +56,27 @@ impl GPUGaugeTheory {
         self.graph.run_global_sweep();
     }
 
-    fn get_graph_state(&mut self, py: Python) -> PyResult<Py<PyArray5<i32>>> {
-        self.get_state_native()
-            .map_err(PyValueError::new_err)
-            .map(|state| state.into_pyarray(py).to_owned())
+    fn get_graph_state(&mut self, py: Python) -> Py<PyArray5<i32>> {
+        self.graph.get_state().clone().into_pyarray(py).to_owned()
     }
 
     fn get_num_global_planes(&self) -> usize {
         self.graph.num_planes()
     }
 
-    fn get_winding_nums(&mut self, py: Python) -> PyResult<Py<PyArray1<i32>>> {
+    fn get_winding_nums(&mut self, py: Python) -> Py<PyArray1<i32>> {
         // sum t, x, y, z
-        let sum = self
-            .get_winding_num_native()
-            .map_err(PyValueError::new_err)?;
-        Ok(sum.into_pyarray(py).to_owned())
+        self.get_winding_num_native().into_pyarray(py).to_owned()
+    }
+
+    fn get_energy(&mut self) -> f32 {
+        // sum t, x, y, z
+        let potential = self.graph.get_potential().to_vec();
+        self.graph
+            .get_state()
+            .into_iter()
+            .map(|s| potential[s.abs() as usize])
+            .sum()
     }
 
     /// Take `num_samples` of the winding numbers for each plane and calculate the sum of squares
@@ -82,19 +87,21 @@ impl GPUGaugeTheory {
         num_samples: usize,
         local_updates_per_step: Option<usize>,
         steps_per_sample: Option<usize>,
+        run_global_updates: Option<bool>,
     ) -> PyResult<Py<PyArray1<f64>>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
+        let run_global_updates = run_global_updates.unwrap_or(true);
 
         let mut sum_squares = Array1::<f64>::zeros((6,));
         for _ in 0..num_samples {
             for _ in 0..steps_per_sample {
                 self.run_local_update(Some(local_updates_per_step));
-                self.run_global_update();
+                if run_global_updates {
+                    self.run_global_update();
+                }
             }
-            let windings = self
-                .get_winding_num_native()
-                .map_err(PyValueError::new_err)?;
+            let windings = self.get_winding_num_native();
             sum_squares
                 .iter_mut()
                 .zip(windings.into_iter())
@@ -114,47 +121,73 @@ impl GPUGaugeTheory {
         num_samples: usize,
         local_updates_per_step: Option<usize>,
         steps_per_sample: Option<usize>,
-    ) -> PyResult<Py<PyArray2<i32>>> {
+        run_global_updates: Option<bool>,
+    ) -> Py<PyArray2<i32>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
+        let run_global_updates = run_global_updates.unwrap_or(true);
 
         let mut windings = Array2::<i32>::zeros((num_samples, 6));
         windings
             .axis_iter_mut(Axis(0))
-            .try_for_each(|mut windings_row| -> Result<(), String> {
+            .for_each(|mut windings_row| {
                 for _ in 0..steps_per_sample {
                     self.run_local_update(Some(local_updates_per_step));
-                    self.run_global_update();
+                    if run_global_updates {
+                        self.run_global_update();
+                    }
                 }
                 windings_row
                     .iter_mut()
-                    .zip(self.get_winding_num_native()?)
+                    .zip(self.get_winding_num_native())
                     .for_each(|(w, v)| *w = v);
-                Ok(())
-            })
-            .map_err(PyValueError::new_err)?;
-        Ok(windings.into_pyarray(py).to_owned())
+            });
+        windings.into_pyarray(py).to_owned()
+    }
+
+    fn simulate_and_get_winding_nums_and_energies(
+        &mut self,
+        py: Python,
+        num_samples: usize,
+        local_updates_per_step: Option<usize>,
+        steps_per_sample: Option<usize>,
+        run_global_updates: Option<bool>,
+    ) -> (Py<PyArray2<i32>>, Py<PyArray1<f32>>) {
+        let local_updates_per_step = local_updates_per_step.unwrap_or(1);
+        let steps_per_sample = steps_per_sample.unwrap_or(1);
+        let run_global_updates = run_global_updates.unwrap_or(true);
+
+        let mut windings = Array2::<i32>::zeros((num_samples, 6));
+        let mut energies = Array1::<f32>::zeros((num_samples,));
+        windings
+            .axis_iter_mut(Axis(0))
+            .zip(energies.iter_mut())
+            .for_each(|(mut windings_row, energy)| {
+                for _ in 0..steps_per_sample {
+                    self.run_local_update(Some(local_updates_per_step));
+                    if run_global_updates {
+                        self.run_global_update();
+                    }
+                }
+                windings_row
+                    .iter_mut()
+                    .zip(self.get_winding_num_native())
+                    .for_each(|(w, v)| *w = v);
+                *energy = self.get_energy();
+            });
+        (
+            windings.into_pyarray(py).to_owned(),
+            energies.into_pyarray(py).to_owned(),
+        )
     }
 }
 
 impl GPUGaugeTheory {
-    fn get_state_native(&mut self) -> Result<Array5<i32>, String> {
-        let state = self.graph.get_state();
-        Array1::from_vec(state)
-            .into_shape((
-                self.bounds.t,
-                self.bounds.x,
-                self.bounds.y,
-                self.bounds.z,
-                6usize,
-            ))
-            .map_err(|e| format!("{:?}", e))
-    }
-
-    fn get_winding_num_native(&mut self) -> Result<Array1<i32>, String> {
+    fn get_winding_num_native(&mut self) -> Array1<i32> {
         let bounds = self.graph.get_bounds();
         let mut sum = self
-            .get_state_native()?
+            .graph
+            .get_state()
             .sum_axis(Axis(0))
             .sum_axis(Axis(0))
             .sum_axis(Axis(0))
@@ -172,6 +205,6 @@ impl GPUGaugeTheory {
             .for_each(|(s, n)| {
                 *s /= n as i32;
             });
-        Ok(sum)
+        sum
     }
 }
