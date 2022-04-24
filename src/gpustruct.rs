@@ -1,7 +1,7 @@
 use gaugemc::rand::prelude::*;
 use gaugemc::*;
-use numpy::ndarray::{Array2, Axis};
-use numpy::{IntoPyArray, PyArray2, PyArray6, PyReadonlyArray6};
+use numpy::ndarray::{Array2, Array3, Axis};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray6, PyReadonlyArray6};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -16,6 +16,12 @@ pub struct GPUGaugeTheory {
 #[pymethods]
 impl GPUGaugeTheory {
     /// Construct a new instance.
+    /// # Arguments:
+    /// * `t`, `x`, `y`, `z`: dimensions of lattice. Must be even numbers.
+    /// * `vs`: Potential in fourier space: V(|n|)
+    /// * `num_replicas`: number of experiments to run, defaults to 1.
+    /// * `initial_state`: state of system: shape = (num_replicas, t, x, y, z, 6)
+    /// * `seed`: RNG seed.
     #[new]
     fn new(
         t: usize,
@@ -44,6 +50,9 @@ impl GPUGaugeTheory {
         .map(|graph| Self { bounds, graph, rng })
     }
 
+    /// Run local update sweeps across all positions
+    /// # Arguments:
+    /// * `num_updates`: number of updates to run
     fn run_local_update(&mut self, num_updates: Option<usize>) {
         let num_updates = num_updates.unwrap_or(1);
         for _ in 0..num_updates {
@@ -54,41 +63,62 @@ impl GPUGaugeTheory {
         }
     }
 
+    /// Run a single sweep of global updates.
     fn run_global_update(&mut self) {
         self.graph.run_global_sweep();
     }
 
+    /// Get the state of all replicas, returns (num_replicas, t, x, y, z, 6)
     fn get_graph_state(&mut self, py: Python) -> Py<PyArray6<i32>> {
-        self.graph.get_state_array().into_pyarray(py).to_owned()
+        self.graph.get_state().clone().into_pyarray(py).to_owned()
     }
 
+    /// Get the number of spanning planes in the model.
+    /// t(x+y+z) + x(y+z) + yz
     fn get_num_global_planes(&self) -> usize {
         self.graph.num_planes()
     }
 
+    /// Get the 6 winding numbers for each replica.
     fn get_winding_nums(&mut self, py: Python) -> Py<PyArray2<i32>> {
-        self.get_winding_num_native().into_pyarray(py).to_owned()
+        self.graph.get_winding_nums().into_pyarray(py).to_owned()
+    }
+
+    /// Get the energy of each replica calculated with the state and V(|n|).
+    fn get_energy(&mut self, py: Python) -> Py<PyArray1<f32>> {
+        // sum t, x, y, z
+        let energies = self.graph.get_energy();
+        energies.into_pyarray(py).to_owned()
     }
 
     /// Take `num_samples` of the winding numbers for each plane and calculate the sum of squares
     /// divides by the number of samples.
+    /// # Arguments
+    /// * `num_samples`: number of samples to take
+    /// * `local_updates_per_step`: between each optional global update, run local updates.
+    /// * `steps_per_sample`: between each sample, run global updates and local updates.
+    /// * `run_global_updates`: enable/disable global updates.
     fn simulate_and_get_winding_variance(
         &mut self,
         py: Python,
         num_samples: usize,
         local_updates_per_step: Option<usize>,
         steps_per_sample: Option<usize>,
+        run_global_updates: Option<bool>,
     ) -> Py<PyArray2<f64>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
+        let run_global_updates = run_global_updates.unwrap_or(true);
 
         let mut sum_squares = Array2::<f64>::zeros((self.graph.get_num_replicas(), 6));
         for _ in 0..num_samples {
             for _ in 0..steps_per_sample {
                 self.run_local_update(Some(local_updates_per_step));
-                self.run_global_update();
+                if run_global_updates {
+                    self.run_global_update();
+                }
             }
-            let windings = self.get_winding_num_native();
+            let windings = self.graph.get_winding_nums();
             sum_squares
                 .iter_mut()
                 .zip(windings.into_iter())
@@ -102,60 +132,99 @@ impl GPUGaugeTheory {
         sum_squares.into_pyarray(py).to_owned()
     }
 
+    /// Run simulations and record winding numbers.
+    /// # Arguments
+    /// * `num_samples`: number of samples to take
+    /// * `local_updates_per_step`: between each optional global update, run local updates.
+    /// * `steps_per_sample`: between each sample, run global updates and local updates.
+    /// * `run_global_updates`: enable/disable global updates.
     fn simulate_and_get_winding_nums(
         &mut self,
         py: Python,
         num_samples: usize,
         local_updates_per_step: Option<usize>,
         steps_per_sample: Option<usize>,
-    ) -> PyResult<Py<PyArray2<i32>>> {
+        run_global_updates: Option<bool>,
+    ) -> Py<PyArray3<i32>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
+        let run_global_updates = run_global_updates.unwrap_or(true);
 
-        let mut windings = Array2::<i32>::zeros((num_samples, 6));
+        let mut windings = Array3::<i32>::zeros((self.graph.get_num_replicas(), num_samples, 6));
         windings
-            .axis_iter_mut(Axis(0))
-            .try_for_each(|mut windings_row| -> Result<(), String> {
+            .axis_iter_mut(Axis(1)) // Iterate through timesteps
+            .for_each(|mut windings_row| {
                 for _ in 0..steps_per_sample {
                     self.run_local_update(Some(local_updates_per_step));
-                    self.run_global_update();
+                    if run_global_updates {
+                        self.run_global_update();
+                    }
                 }
+                let winding_nums = self.graph.get_winding_nums();
                 windings_row
                     .iter_mut()
-                    .zip(self.get_winding_num_native())
+                    .zip(winding_nums.iter().cloned())
                     .for_each(|(w, v)| *w = v);
-                Ok(())
-            })
-            .map_err(PyValueError::new_err)?;
-        Ok(windings.into_pyarray(py).to_owned())
+            });
+        windings.into_pyarray(py).to_owned()
     }
-}
 
-impl GPUGaugeTheory {
-    /// Shape: (num_replicas, 6)
-    fn get_winding_num_native(&mut self) -> Array2<i32> {
-        let bounds = self.graph.get_bounds();
-        // (r, t, x, y, z, p) --> sum middle 4 --> (r, p)
-        let mut sum = self
-            .graph
-            .get_state_array()
-            .sum_axis(Axis(1))
-            .sum_axis(Axis(1))
-            .sum_axis(Axis(1))
-            .sum_axis(Axis(1));
-        let plane_sizes = [
-            bounds.t * bounds.x,
-            bounds.t * bounds.y,
-            bounds.t * bounds.z,
-            bounds.x * bounds.y,
-            bounds.x * bounds.z,
-            bounds.y * bounds.z,
-        ];
-        sum.axis_iter_mut(Axis(0)).for_each(|mut arr| {
-            arr.iter_mut().zip(plane_sizes.iter()).for_each(|(s, n)| {
-                *s /= *n as i32;
+    fn simulate_and_get_winding_nums_and_energies(
+        &mut self,
+        py: Python,
+        num_samples: usize,
+        local_updates_per_step: Option<usize>,
+        steps_per_sample: Option<usize>,
+        run_global_updates: Option<bool>,
+    ) -> (Py<PyArray3<i32>>, Py<PyArray2<f32>>) {
+        let local_updates_per_step = local_updates_per_step.unwrap_or(1);
+        let steps_per_sample = steps_per_sample.unwrap_or(1);
+        let run_global_updates = run_global_updates.unwrap_or(true);
+
+        let num_replicas = self.graph.get_num_replicas();
+        let mut windings = Array3::<i32>::zeros((num_replicas, num_samples, 6));
+        let mut energies = Array2::<f32>::zeros((num_replicas, num_samples));
+        windings
+            .axis_iter_mut(Axis(1))
+            .zip(energies.axis_iter_mut(Axis(1)))
+            .for_each(|(mut windings_row, mut energy_row)| {
+                for _ in 0..steps_per_sample {
+                    self.run_local_update(Some(local_updates_per_step));
+                    if run_global_updates {
+                        self.run_global_update();
+                    }
+                }
+                let winding_nums = self.graph.get_winding_nums();
+                windings_row
+                    .iter_mut()
+                    .zip(winding_nums.iter().cloned())
+                    .for_each(|(w, v)| *w = v);
+                let energies = self.graph.get_energy();
+                energy_row
+                    .iter_mut()
+                    .zip(energies.iter().cloned())
+                    .for_each(|(er, e)| *er = e);
+            });
+        (
+            windings.into_pyarray(py).to_owned(),
+            energies.into_pyarray(py).to_owned(),
+        )
+    }
+
+    pub fn get_violations(
+        &mut self,
+    ) -> Vec<((usize, [usize; 4], usize), Vec<(usize, [usize; 5])>)> {
+        self.graph
+            .get_edges_with_violations()
+            .into_iter()
+            .map(|((r, s, d), plqs)| {
+                (
+                    (r, [s.t, s.x, s.y, s.z], d.into()),
+                    plqs.into_iter()
+                        .map(|(s, p)| (r, [s.t, s.x, s.y, s.z, p]))
+                        .collect(),
+                )
             })
-        });
-        sum
+            .collect()
     }
 }
