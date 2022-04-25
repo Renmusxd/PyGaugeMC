@@ -55,12 +55,7 @@ impl GPUGaugeTheory {
     /// * `num_updates`: number of updates to run
     fn run_local_update(&mut self, num_updates: Option<usize>) {
         let num_updates = num_updates.unwrap_or(1);
-        for _ in 0..num_updates {
-            NDDualGraph::get_cube_dim_and_offset_iterator().for_each(|(dims, offset)| {
-                let leftover = NDDualGraph::get_leftover_dim(&dims);
-                self.graph.run_local_sweep(&dims, leftover, offset);
-            })
-        }
+        self.run_local_update_native(num_updates);
     }
 
     /// Run a single sweep of global updates.
@@ -69,8 +64,11 @@ impl GPUGaugeTheory {
     }
 
     /// Get the state of all replicas, returns (num_replicas, t, x, y, z, 6)
-    fn get_graph_state(&mut self, py: Python) -> Py<PyArray6<i32>> {
-        self.graph.get_state().clone().into_pyarray(py).to_owned()
+    fn get_graph_state(&mut self, py: Python) -> PyResult<Py<PyArray6<i32>>> {
+        self.graph
+            .get_state()
+            .map(|s| s.clone().into_pyarray(py).to_owned())
+            .map_err(PyValueError::new_err)
     }
 
     /// Get the number of spanning planes in the model.
@@ -80,15 +78,20 @@ impl GPUGaugeTheory {
     }
 
     /// Get the 6 winding numbers for each replica.
-    fn get_winding_nums(&mut self, py: Python) -> Py<PyArray2<i32>> {
-        self.graph.get_winding_nums().into_pyarray(py).to_owned()
+    fn get_winding_nums(&mut self, py: Python) -> PyResult<Py<PyArray2<i32>>> {
+        self.graph
+            .get_winding_nums()
+            .map(|w| w.into_pyarray(py).to_owned())
+            .map_err(PyValueError::new_err)
     }
 
     /// Get the energy of each replica calculated with the state and V(|n|).
-    fn get_energy(&mut self, py: Python) -> Py<PyArray1<f32>> {
+    fn get_energy(&mut self, py: Python) -> PyResult<Py<PyArray1<f32>>> {
         // sum t, x, y, z
-        let energies = self.graph.get_energy();
-        energies.into_pyarray(py).to_owned()
+        self.graph
+            .get_energy()
+            .map(|e| e.into_pyarray(py).to_owned())
+            .map_err(PyValueError::new_err)
     }
 
     /// Take `num_samples` of the winding numbers for each plane and calculate the sum of squares
@@ -105,20 +108,28 @@ impl GPUGaugeTheory {
         local_updates_per_step: Option<usize>,
         steps_per_sample: Option<usize>,
         run_global_updates: Option<bool>,
-    ) -> Py<PyArray2<f64>> {
+        run_rotate_pcg: Option<bool>,
+    ) -> PyResult<Py<PyArray2<f64>>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
         let run_global_updates = run_global_updates.unwrap_or(true);
+        let run_rotate_pcg = run_rotate_pcg.unwrap_or(true);
 
         let mut sum_squares = Array2::<f64>::zeros((self.graph.get_num_replicas(), 6));
         for _ in 0..num_samples {
             for _ in 0..steps_per_sample {
-                self.run_local_update(Some(local_updates_per_step));
+                self.run_local_update_native(local_updates_per_step);
                 if run_global_updates {
-                    self.run_global_update();
+                    self.graph.run_global_sweep();
+                }
+                if run_rotate_pcg {
+                    self.graph.run_pcg_rotate();
                 }
             }
-            let windings = self.graph.get_winding_nums();
+            let windings = self
+                .graph
+                .get_winding_nums()
+                .map_err(PyValueError::new_err)?;
             sum_squares
                 .iter_mut()
                 .zip(windings.into_iter())
@@ -129,7 +140,7 @@ impl GPUGaugeTheory {
         sum_squares
             .iter_mut()
             .for_each(|s| *s /= num_samples as f64);
-        sum_squares.into_pyarray(py).to_owned()
+        Ok(sum_squares.into_pyarray(py).to_owned())
     }
 
     /// Run simulations and record winding numbers.
@@ -145,28 +156,35 @@ impl GPUGaugeTheory {
         local_updates_per_step: Option<usize>,
         steps_per_sample: Option<usize>,
         run_global_updates: Option<bool>,
-    ) -> Py<PyArray3<i32>> {
+        run_rotate_pcg: Option<bool>,
+    ) -> PyResult<Py<PyArray3<i32>>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
         let run_global_updates = run_global_updates.unwrap_or(true);
+        let run_rotate_pcg = run_rotate_pcg.unwrap_or(true);
 
-        let mut windings = Array3::<i32>::zeros((self.graph.get_num_replicas(), num_samples, 6));
+        let mut windings = Array3::zeros((self.graph.get_num_replicas(), num_samples, 6));
         windings
             .axis_iter_mut(Axis(1)) // Iterate through timesteps
-            .for_each(|mut windings_row| {
+            .try_for_each(|mut windings_row| -> Result<(), String> {
                 for _ in 0..steps_per_sample {
-                    self.run_local_update(Some(local_updates_per_step));
+                    self.run_local_update_native(local_updates_per_step);
                     if run_global_updates {
-                        self.run_global_update();
+                        self.graph.run_global_sweep();
+                    }
+                    if run_rotate_pcg {
+                        self.graph.run_pcg_rotate();
                     }
                 }
-                let winding_nums = self.graph.get_winding_nums();
+                let winding_nums = self.graph.get_winding_nums()?;
                 windings_row
                     .iter_mut()
                     .zip(winding_nums.iter().cloned())
                     .for_each(|(w, v)| *w = v);
-            });
-        windings.into_pyarray(py).to_owned()
+                Ok(())
+            })
+            .map_err(PyValueError::new_err)?;
+        Ok(windings.into_pyarray(py).to_owned())
     }
 
     fn simulate_and_get_winding_nums_and_energies(
@@ -176,46 +194,55 @@ impl GPUGaugeTheory {
         local_updates_per_step: Option<usize>,
         steps_per_sample: Option<usize>,
         run_global_updates: Option<bool>,
-    ) -> (Py<PyArray3<i32>>, Py<PyArray2<f32>>) {
+        run_rotate_pcg: Option<bool>,
+    ) -> PyResult<(Py<PyArray3<i32>>, Py<PyArray2<f32>>)> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
         let run_global_updates = run_global_updates.unwrap_or(true);
+        let run_rotate_pcg = run_rotate_pcg.unwrap_or(true);
 
         let num_replicas = self.graph.get_num_replicas();
-        let mut windings = Array3::<i32>::zeros((num_replicas, num_samples, 6));
-        let mut energies = Array2::<f32>::zeros((num_replicas, num_samples));
+        let mut windings = Array3::zeros((num_replicas, num_samples, 6));
+        let mut energies = Array2::zeros((num_replicas, num_samples));
         windings
             .axis_iter_mut(Axis(1))
             .zip(energies.axis_iter_mut(Axis(1)))
-            .for_each(|(mut windings_row, mut energy_row)| {
+            .try_for_each(|(mut windings_row, mut energy_row)| -> Result<(), String> {
                 for _ in 0..steps_per_sample {
-                    self.run_local_update(Some(local_updates_per_step));
+                    self.run_local_update_native(local_updates_per_step);
                     if run_global_updates {
-                        self.run_global_update();
+                        self.graph.run_global_sweep();
+                    }
+                    if run_rotate_pcg {
+                        self.graph.run_pcg_rotate();
                     }
                 }
-                let winding_nums = self.graph.get_winding_nums();
+                let winding_nums = self.graph.get_winding_nums()?;
                 windings_row
                     .iter_mut()
                     .zip(winding_nums.iter().cloned())
                     .for_each(|(w, v)| *w = v);
-                let energies = self.graph.get_energy();
+                let energies = self.graph.get_energy()?;
                 energy_row
                     .iter_mut()
                     .zip(energies.iter().cloned())
                     .for_each(|(er, e)| *er = e);
-            });
-        (
+                Ok(())
+            })
+            .map_err(PyValueError::new_err)?;
+        Ok((
             windings.into_pyarray(py).to_owned(),
             energies.into_pyarray(py).to_owned(),
-        )
+        ))
     }
 
     pub fn get_violations(
         &mut self,
-    ) -> Vec<((usize, [usize; 4], usize), Vec<(usize, [usize; 5])>)> {
-        self.graph
+    ) -> PyResult<Vec<((usize, [usize; 4], usize), Vec<(usize, [usize; 5])>)>> {
+        let res = self
+            .graph
             .get_edges_with_violations()
+            .map_err(PyValueError::new_err)?
             .into_iter()
             .map(|((r, s, d), plqs)| {
                 (
@@ -225,6 +252,18 @@ impl GPUGaugeTheory {
                         .collect(),
                 )
             })
-            .collect()
+            .collect();
+        Ok(res)
+    }
+}
+
+impl GPUGaugeTheory {
+    fn run_local_update_native(&mut self, num_updates: usize) {
+        for _ in 0..num_updates {
+            NDDualGraph::get_cube_dim_and_offset_iterator().for_each(|(dims, offset)| {
+                let leftover = NDDualGraph::get_leftover_dim(&dims);
+                self.graph.run_local_sweep(&dims, leftover, offset);
+            })
+        }
     }
 }
