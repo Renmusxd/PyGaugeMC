@@ -85,11 +85,19 @@ impl GPUGaugeTheory {
             .map_err(PyValueError::new_err)
     }
 
+    fn clear_stored_state(&mut self) {
+        self.graph.clear_stored_state()
+    }
+
     /// Get the energy of each replica calculated with the state and V(|n|).
-    fn get_energy(&mut self, py: Python) -> PyResult<Py<PyArray1<f32>>> {
+    fn get_energy(
+        &mut self,
+        py: Python,
+        from_stored_state: Option<bool>,
+    ) -> PyResult<Py<PyArray1<f32>>> {
         // sum t, x, y, z
         self.graph
-            .get_energy()
+            .get_energy(from_stored_state)
             .map(|e| e.into_pyarray(py).to_owned())
             .map_err(PyValueError::new_err)
     }
@@ -195,6 +203,7 @@ impl GPUGaugeTheory {
         steps_per_sample: Option<usize>,
         run_global_updates: Option<bool>,
         run_rotate_pcg: Option<bool>,
+        energy_from_stored_state: Option<bool>,
     ) -> PyResult<(Py<PyArray3<i32>>, Py<PyArray2<f32>>)> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
@@ -222,7 +231,7 @@ impl GPUGaugeTheory {
                     .iter_mut()
                     .zip(winding_nums.iter().cloned())
                     .for_each(|(w, v)| *w = v);
-                let energies = self.graph.get_energy()?;
+                let energies = self.graph.get_energy(energy_from_stored_state)?;
                 energy_row
                     .iter_mut()
                     .zip(energies.iter().cloned())
