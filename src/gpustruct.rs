@@ -1,7 +1,9 @@
 use gaugemc::rand::prelude::*;
 use gaugemc::*;
 use numpy::ndarray::{Array2, Array3, Axis};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray6, PyReadonlyArray6};
+use numpy::{
+    IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray6, PyReadonlyArray2, PyReadonlyArray6,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -28,12 +30,13 @@ impl GPUGaugeTheory {
         x: usize,
         y: usize,
         z: usize,
-        vs: Vec<f32>,
+        vs: PyReadonlyArray2<f32>,
         num_replicas: Option<usize>,
         initial_state: Option<PyReadonlyArray6<i32>>,
         seed: Option<u64>,
     ) -> PyResult<Self> {
         let rng = seed.map(SmallRng::seed_from_u64);
+        let vn = vs.to_owned_array();
         let initial_state = initial_state.map(|state| state.to_owned_array());
         let bounds = SiteIndex { t, x, y, z };
         pollster::block_on(gaugemc::GPUBackend::new_async(
@@ -41,8 +44,7 @@ impl GPUGaugeTheory {
             x,
             y,
             z,
-            vs,
-            num_replicas,
+            vn,
             initial_state,
             seed,
         ))
@@ -61,6 +63,22 @@ impl GPUGaugeTheory {
     /// Run a single sweep of global updates.
     fn run_global_update(&mut self) {
         self.graph.run_global_sweep();
+    }
+
+    /// Run a parallel tempering attempt between pairs:
+    /// (2i + offset) and (2i + offset + 1)
+    fn run_parallel_tempering(
+        &mut self,
+        offset: bool,
+        energies_from_stored_state: Option<bool>,
+    ) -> PyResult<()> {
+        self.graph
+            .run_parallel_tempering_sweep(offset, energies_from_stored_state)
+            .map_err(PyValueError::new_err)
+    }
+
+    fn get_parallel_tempering_success_rate(&self) -> Vec<f64> {
+        self.graph.get_parallel_tempering_success_rate()
     }
 
     /// Get the state of all replicas, returns (num_replicas, t, x, y, z, 6)
@@ -109,6 +127,7 @@ impl GPUGaugeTheory {
     /// * `local_updates_per_step`: between each optional global update, run local updates.
     /// * `steps_per_sample`: between each sample, run global updates and local updates.
     /// * `run_global_updates`: enable/disable global updates.
+    /// * `run_parallel_tempering`: run parallel tempering after the global update.
     fn simulate_and_get_winding_variance(
         &mut self,
         py: Python,
@@ -117,21 +136,29 @@ impl GPUGaugeTheory {
         steps_per_sample: Option<usize>,
         run_global_updates: Option<bool>,
         run_rotate_pcg: Option<bool>,
+        run_parallel_tempering: Option<bool>,
+        energies_from_stored_state: Option<bool>,
     ) -> PyResult<Py<PyArray2<f64>>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
         let run_global_updates = run_global_updates.unwrap_or(true);
         let run_rotate_pcg = run_rotate_pcg.unwrap_or(true);
+        let run_parallel_tempering = run_parallel_tempering.unwrap_or(false);
 
         let mut sum_squares = Array2::<f64>::zeros((self.graph.get_num_replicas(), 6));
         for _ in 0..num_samples {
-            for _ in 0..steps_per_sample {
+            for i in 0..steps_per_sample {
                 self.run_local_update_native(local_updates_per_step);
                 if run_global_updates {
                     self.graph.run_global_sweep();
                 }
                 if run_rotate_pcg {
                     self.graph.run_pcg_rotate();
+                }
+                if run_parallel_tempering {
+                    self.graph
+                        .run_parallel_tempering_sweep(i % 2 == 1, energies_from_stored_state)
+                        .map_err(PyValueError::new_err)?;
                 }
             }
             let windings = self
@@ -157,6 +184,7 @@ impl GPUGaugeTheory {
     /// * `local_updates_per_step`: between each optional global update, run local updates.
     /// * `steps_per_sample`: between each sample, run global updates and local updates.
     /// * `run_global_updates`: enable/disable global updates.
+    /// * `run_parallel_tempering`: run parallel tempering after the global update.
     fn simulate_and_get_winding_nums(
         &mut self,
         py: Python,
@@ -165,23 +193,30 @@ impl GPUGaugeTheory {
         steps_per_sample: Option<usize>,
         run_global_updates: Option<bool>,
         run_rotate_pcg: Option<bool>,
+        run_parallel_tempering: Option<bool>,
+        energies_from_stored_state: Option<bool>,
     ) -> PyResult<Py<PyArray3<i32>>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
         let run_global_updates = run_global_updates.unwrap_or(true);
         let run_rotate_pcg = run_rotate_pcg.unwrap_or(true);
+        let run_parallel_tempering = run_parallel_tempering.unwrap_or(false);
 
         let mut windings = Array3::zeros((self.graph.get_num_replicas(), num_samples, 6));
         windings
             .axis_iter_mut(Axis(1)) // Iterate through timesteps
             .try_for_each(|mut windings_row| -> Result<(), String> {
-                for _ in 0..steps_per_sample {
+                for i in 0..steps_per_sample {
                     self.run_local_update_native(local_updates_per_step);
                     if run_global_updates {
                         self.graph.run_global_sweep();
                     }
                     if run_rotate_pcg {
                         self.graph.run_pcg_rotate();
+                    }
+                    if run_parallel_tempering {
+                        self.graph
+                            .run_parallel_tempering_sweep(i % 2 == 1, energies_from_stored_state)?;
                     }
                 }
                 let winding_nums = self.graph.get_winding_nums()?;
@@ -195,6 +230,13 @@ impl GPUGaugeTheory {
         Ok(windings.into_pyarray(py).to_owned())
     }
 
+    /// Run simulations and record winding numbers and energies.
+    /// # Arguments
+    /// * `num_samples`: number of samples to take
+    /// * `local_updates_per_step`: between each optional global update, run local updates.
+    /// * `steps_per_sample`: between each sample, run global updates and local updates.
+    /// * `run_global_updates`: enable/disable global updates.
+    /// * `run_parallel_tempering`: run parallel tempering after the global update.
     fn simulate_and_get_winding_nums_and_energies(
         &mut self,
         py: Python,
@@ -204,11 +246,14 @@ impl GPUGaugeTheory {
         run_global_updates: Option<bool>,
         run_rotate_pcg: Option<bool>,
         energy_from_stored_state: Option<bool>,
+        run_parallel_tempering: Option<bool>,
+        energies_from_stored_state: Option<bool>,
     ) -> PyResult<(Py<PyArray3<i32>>, Py<PyArray2<f32>>)> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
         let run_global_updates = run_global_updates.unwrap_or(true);
         let run_rotate_pcg = run_rotate_pcg.unwrap_or(true);
+        let run_parallel_tempering = run_parallel_tempering.unwrap_or(false);
 
         let num_replicas = self.graph.get_num_replicas();
         let mut windings = Array3::zeros((num_replicas, num_samples, 6));
@@ -217,13 +262,17 @@ impl GPUGaugeTheory {
             .axis_iter_mut(Axis(1))
             .zip(energies.axis_iter_mut(Axis(1)))
             .try_for_each(|(mut windings_row, mut energy_row)| -> Result<(), String> {
-                for _ in 0..steps_per_sample {
+                for i in 0..steps_per_sample {
                     self.run_local_update_native(local_updates_per_step);
                     if run_global_updates {
                         self.graph.run_global_sweep();
                     }
                     if run_rotate_pcg {
                         self.graph.run_pcg_rotate();
+                    }
+                    if run_parallel_tempering {
+                        self.graph
+                            .run_parallel_tempering_sweep(i % 2 == 1, energies_from_stored_state)?;
                     }
                 }
                 let winding_nums = self.graph.get_winding_nums()?;
