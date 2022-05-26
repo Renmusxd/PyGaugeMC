@@ -31,7 +31,6 @@ impl GPUGaugeTheory {
         y: usize,
         z: usize,
         vs: PyReadonlyArray2<f32>,
-        num_replicas: Option<usize>,
         initial_state: Option<PyReadonlyArray6<i32>>,
         seed: Option<u64>,
     ) -> PyResult<Self> {
