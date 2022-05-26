@@ -120,6 +120,39 @@ impl GPUGaugeTheory {
             .map_err(PyValueError::new_err)
     }
 
+    /// Run simulation without sampling.
+    fn simulate(
+        &mut self,
+        steps: Option<usize>,
+        local_updates_per_step: Option<usize>,
+        run_global_updates: Option<bool>,
+        run_rotate_pcg: Option<bool>,
+        run_parallel_tempering: Option<bool>,
+        energies_from_stored_state: Option<bool>,
+    ) -> PyResult<()> {
+        let local_updates_per_step = local_updates_per_step.unwrap_or(1);
+        let steps = steps.unwrap_or(1);
+        let run_global_updates = run_global_updates.unwrap_or(true);
+        let run_rotate_pcg = run_rotate_pcg.unwrap_or(true);
+        let run_parallel_tempering = run_parallel_tempering.unwrap_or(false);
+
+        for i in 0..steps {
+            self.run_local_update_native(local_updates_per_step);
+            if run_global_updates {
+                self.graph.run_global_sweep();
+            }
+            if run_rotate_pcg {
+                self.graph.run_pcg_rotate();
+            }
+            if run_parallel_tempering {
+                self.graph
+                    .run_parallel_tempering_sweep(i % 2 == 1, energies_from_stored_state)
+                    .map_err(PyValueError::new_err)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Take `num_samples` of the winding numbers for each plane and calculate the sum of squares
     /// divides by the number of samples.
     /// # Arguments
@@ -147,20 +180,14 @@ impl GPUGaugeTheory {
 
         let mut sum_squares = Array2::<f64>::zeros((self.graph.get_num_replicas(), 6));
         for _ in 0..num_samples {
-            for i in 0..steps_per_sample {
-                self.run_local_update_native(local_updates_per_step);
-                if run_global_updates {
-                    self.graph.run_global_sweep();
-                }
-                if run_rotate_pcg {
-                    self.graph.run_pcg_rotate();
-                }
-                if run_parallel_tempering {
-                    self.graph
-                        .run_parallel_tempering_sweep(i % 2 == 1, energies_from_stored_state)
-                        .map_err(PyValueError::new_err)?;
-                }
-            }
+            self.simulate(
+                Some(local_updates_per_step),
+                Some(steps_per_sample),
+                Some(run_global_updates),
+                Some(run_rotate_pcg),
+                Some(run_parallel_tempering),
+                energies_from_stored_state,
+            )?;
             let windings = self
                 .graph
                 .get_winding_nums()
@@ -205,28 +232,25 @@ impl GPUGaugeTheory {
         let mut windings = Array3::zeros((self.graph.get_num_replicas(), num_samples, 6));
         windings
             .axis_iter_mut(Axis(1)) // Iterate through timesteps
-            .try_for_each(|mut windings_row| -> Result<(), String> {
-                for i in 0..steps_per_sample {
-                    self.run_local_update_native(local_updates_per_step);
-                    if run_global_updates {
-                        self.graph.run_global_sweep();
-                    }
-                    if run_rotate_pcg {
-                        self.graph.run_pcg_rotate();
-                    }
-                    if run_parallel_tempering {
-                        self.graph
-                            .run_parallel_tempering_sweep(i % 2 == 1, energies_from_stored_state)?;
-                    }
-                }
-                let winding_nums = self.graph.get_winding_nums()?;
+            .try_for_each(|mut windings_row| -> PyResult<()> {
+                self.simulate(
+                    Some(local_updates_per_step),
+                    Some(steps_per_sample),
+                    Some(run_global_updates),
+                    Some(run_rotate_pcg),
+                    Some(run_parallel_tempering),
+                    energies_from_stored_state,
+                )?;
+                let winding_nums = self
+                    .graph
+                    .get_winding_nums()
+                    .map_err(PyValueError::new_err)?;
                 windings_row
                     .iter_mut()
                     .zip(winding_nums.iter().cloned())
                     .for_each(|(w, v)| *w = v);
                 Ok(())
-            })
-            .map_err(PyValueError::new_err)?;
+            })?;
         Ok(windings.into_pyarray(py).to_owned())
     }
 
@@ -261,26 +285,27 @@ impl GPUGaugeTheory {
         windings
             .axis_iter_mut(Axis(1))
             .zip(energies.axis_iter_mut(Axis(1)))
-            .try_for_each(|(mut windings_row, mut energy_row)| -> Result<(), String> {
-                for i in 0..steps_per_sample {
-                    self.run_local_update_native(local_updates_per_step);
-                    if run_global_updates {
-                        self.graph.run_global_sweep();
-                    }
-                    if run_rotate_pcg {
-                        self.graph.run_pcg_rotate();
-                    }
-                    if run_parallel_tempering {
-                        self.graph
-                            .run_parallel_tempering_sweep(i % 2 == 1, energies_from_stored_state)?;
-                    }
-                }
-                let winding_nums = self.graph.get_winding_nums()?;
+            .try_for_each(|(mut windings_row, mut energy_row)| -> PyResult<()> {
+                self.simulate(
+                    Some(local_updates_per_step),
+                    Some(steps_per_sample),
+                    Some(run_global_updates),
+                    Some(run_rotate_pcg),
+                    Some(run_parallel_tempering),
+                    energies_from_stored_state,
+                )?;
+                let winding_nums = self
+                    .graph
+                    .get_winding_nums()
+                    .map_err(PyValueError::new_err)?;
                 windings_row
                     .iter_mut()
                     .zip(winding_nums.iter().cloned())
                     .for_each(|(w, v)| *w = v);
-                let energies = self.graph.get_energy(energy_from_stored_state)?;
+                let energies = self
+                    .graph
+                    .get_energy(energy_from_stored_state)
+                    .map_err(PyValueError::new_err)?;
                 energy_row
                     .iter_mut()
                     .zip(energies.iter().cloned())
