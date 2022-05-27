@@ -22,6 +22,7 @@ pollster = {version="^0.2",optional=true }
 
 [dependencies.gaugemc]
 git = "https://github.com/Renmusxd/GaugeMC"
+branch = "BleedingEdgeWGPU"
 features = ["gpu-wgpu"]
 
 [dependencies.pyo3]
