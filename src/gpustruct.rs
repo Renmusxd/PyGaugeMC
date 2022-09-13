@@ -38,17 +38,9 @@ impl GPUGaugeTheory {
         let vn = vs.to_owned_array();
         let initial_state = initial_state.map(|state| state.to_owned_array());
         let bounds = SiteIndex { t, x, y, z };
-        pollster::block_on(gaugemc::GPUBackend::new_async(
-            t,
-            x,
-            y,
-            z,
-            vn,
-            initial_state,
-            seed,
-        ))
-        .map_err(PyValueError::new_err)
-        .map(|graph| Self { bounds, graph, rng })
+        pollster::block_on(GPUBackend::new_async(t, x, y, z, vn, initial_state, seed))
+            .map_err(PyValueError::new_err)
+            .map(|graph| Self { bounds, graph, rng })
     }
 
     /// Run local update sweeps across all positions
@@ -66,13 +58,9 @@ impl GPUGaugeTheory {
 
     /// Run a parallel tempering attempt between pairs:
     /// (2i + offset) and (2i + offset + 1)
-    fn run_parallel_tempering(
-        &mut self,
-        offset: bool,
-        energies_from_stored_state: Option<bool>,
-    ) -> PyResult<()> {
+    fn run_parallel_tempering(&mut self, offset: bool) -> PyResult<()> {
         self.graph
-            .run_parallel_tempering_sweep(offset, energies_from_stored_state)
+            .run_parallel_tempering_sweep(offset)
             .map_err(PyValueError::new_err)
     }
 
@@ -107,19 +95,21 @@ impl GPUGaugeTheory {
     }
 
     /// Get the energy of each replica calculated with the state and V(|n|).
-    fn get_energy(
-        &mut self,
-        py: Python,
-        from_stored_state: Option<bool>,
-    ) -> PyResult<Py<PyArray1<f32>>> {
+    fn get_energy(&mut self, py: Python) -> PyResult<Py<PyArray1<f32>>> {
         // sum t, x, y, z
         self.graph
-            .get_energy(from_stored_state)
+            .get_energy()
             .map(|e| e.into_pyarray(py).to_owned())
             .map_err(PyValueError::new_err)
     }
 
     /// Run simulation without sampling.
+    /// # Arguments
+    /// * `steps`: number of steps to take
+    /// * `local_updates_per_step`: between each optional global update, run local updates.
+    /// * `run_global_updates`: enable/disable global updates.
+    /// * `run_rotate_pcg`: enable/disable pcg updates.
+    /// * `run_parallel_tempering`: run parallel tempering after the global update.
     fn simulate(
         &mut self,
         steps: Option<usize>,
@@ -127,7 +117,6 @@ impl GPUGaugeTheory {
         run_global_updates: Option<bool>,
         run_rotate_pcg: Option<bool>,
         run_parallel_tempering: Option<bool>,
-        energies_from_stored_state: Option<bool>,
     ) -> PyResult<()> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps = steps.unwrap_or(1);
@@ -145,7 +134,7 @@ impl GPUGaugeTheory {
             }
             if run_parallel_tempering {
                 self.graph
-                    .run_parallel_tempering_sweep(i % 2 == 1, energies_from_stored_state)
+                    .run_parallel_tempering_sweep(i % 2 == 1)
                     .map_err(PyValueError::new_err)?;
             }
         }
@@ -169,7 +158,6 @@ impl GPUGaugeTheory {
         run_global_updates: Option<bool>,
         run_rotate_pcg: Option<bool>,
         run_parallel_tempering: Option<bool>,
-        energies_from_stored_state: Option<bool>,
     ) -> PyResult<Py<PyArray2<f64>>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
@@ -185,7 +173,6 @@ impl GPUGaugeTheory {
                 Some(run_global_updates),
                 Some(run_rotate_pcg),
                 Some(run_parallel_tempering),
-                energies_from_stored_state,
             )?;
             let windings = self
                 .graph
@@ -220,7 +207,6 @@ impl GPUGaugeTheory {
         run_global_updates: Option<bool>,
         run_rotate_pcg: Option<bool>,
         run_parallel_tempering: Option<bool>,
-        energies_from_stored_state: Option<bool>,
     ) -> PyResult<Py<PyArray3<i32>>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
@@ -238,7 +224,6 @@ impl GPUGaugeTheory {
                     Some(run_global_updates),
                     Some(run_rotate_pcg),
                     Some(run_parallel_tempering),
-                    energies_from_stored_state,
                 )?;
                 let winding_nums = self
                     .graph
@@ -268,9 +253,7 @@ impl GPUGaugeTheory {
         steps_per_sample: Option<usize>,
         run_global_updates: Option<bool>,
         run_rotate_pcg: Option<bool>,
-        energy_from_stored_state: Option<bool>,
         run_parallel_tempering: Option<bool>,
-        energies_from_stored_state: Option<bool>,
     ) -> PyResult<(Py<PyArray3<i32>>, Py<PyArray2<f32>>)> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
@@ -291,7 +274,6 @@ impl GPUGaugeTheory {
                     Some(run_global_updates),
                     Some(run_rotate_pcg),
                     Some(run_parallel_tempering),
-                    energies_from_stored_state,
                 )?;
                 let winding_nums = self
                     .graph
@@ -301,10 +283,7 @@ impl GPUGaugeTheory {
                     .iter_mut()
                     .zip(winding_nums.iter().cloned())
                     .for_each(|(w, v)| *w = v);
-                let energies = self
-                    .graph
-                    .get_energy(energy_from_stored_state)
-                    .map_err(PyValueError::new_err)?;
+                let energies = self.graph.get_energy().map_err(PyValueError::new_err)?;
                 energy_row
                     .iter_mut()
                     .zip(energies.iter().cloned())
@@ -333,9 +312,7 @@ impl GPUGaugeTheory {
         steps_per_sample: Option<usize>,
         run_global_updates: Option<bool>,
         run_rotate_pcg: Option<bool>,
-        energy_from_stored_state: Option<bool>,
         run_parallel_tempering: Option<bool>,
-        energies_from_stored_state: Option<bool>,
     ) -> PyResult<Py<PyArray2<f32>>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
         let steps_per_sample = steps_per_sample.unwrap_or(1);
@@ -354,12 +331,8 @@ impl GPUGaugeTheory {
                     Some(run_global_updates),
                     Some(run_rotate_pcg),
                     Some(run_parallel_tempering),
-                    energies_from_stored_state,
                 )?;
-                let energies = self
-                    .graph
-                    .get_energy(energy_from_stored_state)
-                    .map_err(PyValueError::new_err)?;
+                let energies = self.graph.get_energy().map_err(PyValueError::new_err)?;
                 energy_row
                     .iter_mut()
                     .zip(energies.iter().cloned())
@@ -368,6 +341,25 @@ impl GPUGaugeTheory {
             })
             .map_err(PyValueError::new_err)?;
         Ok(energies.into_pyarray(py).to_owned())
+    }
+
+    pub fn set_winding_num_cpu(&mut self) {
+        self.graph.set_winding_num_method(WindingNumsOption::Cpu)
+    }
+    pub fn set_winding_num_cpu_old(&mut self) {
+        self.graph.set_winding_num_method(WindingNumsOption::OldCpu)
+    }
+    pub fn set_winding_num_gpu(&mut self) {
+        self.graph.set_winding_num_method(WindingNumsOption::Gpu)
+    }
+    pub fn set_energy_cpu(&mut self) {
+        self.graph.set_energy_method(EnergyOption::Cpu)
+    }
+    pub fn set_energy_cpu_if_state_available(&mut self) {
+        self.graph.set_energy_method(EnergyOption::CpuIfPresent)
+    }
+    pub fn set_energy_gpu(&mut self) {
+        self.graph.set_energy_method(EnergyOption::Gpu)
     }
 
     pub fn get_violations(

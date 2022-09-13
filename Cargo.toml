@@ -25,8 +25,8 @@ git = "https://github.com/Renmusxd/GaugeMC"
 features = ["gpu-wgpu"]
 
 [dependencies.pyo3]
-version = "^0.16"
+version = ">=0.17"
 features = ["extension-module"]
 
 [dependencies.numpy]
-version = "^0.16"
+version = ">=0.17"
