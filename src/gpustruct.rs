@@ -33,14 +33,24 @@ impl GPUGaugeTheory {
         vs: PyReadonlyArray2<f32>,
         initial_state: Option<PyReadonlyArray6<i32>>,
         seed: Option<u64>,
+        device_id: Option<usize>,
     ) -> PyResult<Self> {
         let rng = seed.map(SmallRng::seed_from_u64);
         let vn = vs.to_owned_array();
         let initial_state = initial_state.map(|state| state.to_owned_array());
         let bounds = SiteIndex { t, x, y, z };
-        pollster::block_on(GPUBackend::new_async(t, x, y, z, vn, initial_state, seed))
-            .map_err(PyValueError::new_err)
-            .map(|graph| Self { bounds, graph, rng })
+        pollster::block_on(GPUBackend::new_async(
+            t,
+            x,
+            y,
+            z,
+            vn,
+            initial_state,
+            seed,
+            device_id,
+        ))
+        .map_err(PyValueError::new_err)
+        .map(|graph| Self { bounds, graph, rng })
     }
 
     /// Run local update sweeps across all positions
