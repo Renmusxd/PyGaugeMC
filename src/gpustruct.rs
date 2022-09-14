@@ -1,3 +1,4 @@
+use env_logger;
 use gaugemc::rand::prelude::*;
 use gaugemc::*;
 use numpy::ndarray::{Array2, Array3, Axis};
