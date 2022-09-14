@@ -35,6 +35,8 @@ impl GPUGaugeTheory {
         seed: Option<u64>,
         device_id: Option<usize>,
     ) -> PyResult<Self> {
+        // Initialize logging if not done.
+        env_logger::try_init().unwrap_or(());
         let rng = seed.map(SmallRng::seed_from_u64);
         let vn = vs.to_owned_array();
         let initial_state = initial_state.map(|state| state.to_owned_array());
