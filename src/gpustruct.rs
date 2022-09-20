@@ -8,7 +8,6 @@ use numpy::{
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use std::iter::Zip;
 
 /// Unlike the Lattice class this maintains a set of graphs with internal state.
 #[pyclass]
@@ -61,9 +60,7 @@ impl GPUGaugeTheory {
     /// Scale each potential by a factor stored in `scales` - given in order of replicas.
     fn scale_potentials_by_factor(&mut self, scale: f32) {
         let mut pots = self.graph.get_potentials().clone();
-        ndarray::Zip::indexed(&mut pots)
-            .into_par_iter()
-            .for_each(|((r, n), vn)| *vn *= scale);
+        pots.iter_mut().for_each(|vn| *vn *= scale);
         self.graph.write_potentials(pots);
     }
 
@@ -72,7 +69,7 @@ impl GPUGaugeTheory {
         let mut pots = self.graph.get_potentials().clone();
         ndarray::Zip::indexed(&mut pots)
             .into_par_iter()
-            .for_each(|((r, n), vn)| *vn *= scales[r]);
+            .for_each(|((r, _), vn)| *vn *= scales[r]);
         self.graph.write_potentials(pots);
     }
 
