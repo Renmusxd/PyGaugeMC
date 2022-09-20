@@ -1,12 +1,14 @@
-use env_logger;
 use gaugemc::rand::prelude::*;
 use gaugemc::*;
+use numpy::ndarray::parallel::prelude::*;
 use numpy::ndarray::{Array2, Array3, Axis};
 use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray6, PyReadonlyArray2, PyReadonlyArray6,
+    ndarray, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray6, PyReadonlyArray2,
+    PyReadonlyArray6,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use std::iter::Zip;
 
 /// Unlike the Lattice class this maintains a set of graphs with internal state.
 #[pyclass]
@@ -54,6 +56,40 @@ impl GPUGaugeTheory {
         ))
         .map_err(PyValueError::new_err)
         .map(|graph| Self { bounds, graph, rng })
+    }
+
+    /// Scale each potential by a factor stored in `scales` - given in order of replicas.
+    fn scale_potentials_by_factor(&mut self, scale: f32) {
+        let mut pots = self.graph.get_potentials().clone();
+        ndarray::Zip::indexed(&mut pots)
+            .into_par_iter()
+            .for_each(|((r, n), vn)| *vn *= scale);
+        self.graph.write_potentials(pots);
+    }
+
+    /// Scale each potential by a factor stored in `scales` - given in order of replicas.
+    fn scale_potentials(&mut self, scales: Vec<f32>) {
+        let mut pots = self.graph.get_potentials().clone();
+        ndarray::Zip::indexed(&mut pots)
+            .into_par_iter()
+            .for_each(|((r, n), vn)| *vn *= scales[r]);
+        self.graph.write_potentials(pots);
+    }
+
+    /// Scale each potential by a factor stored in `scales` - given in order of replicas.
+    fn write_potentials(&mut self, vn: PyReadonlyArray2<f32>) -> PyResult<()> {
+        let pot_shape = self.graph.get_potentials().shape();
+        if pot_shape.ne(vn.shape()) {
+            Err(PyValueError::new_err(format!(
+                "Potential shapes do not match: expected {:?} found {:?}",
+                pot_shape,
+                vn.shape()
+            )))
+        } else {
+            let vn = vn.to_owned_array();
+            self.graph.write_potentials(vn);
+            Ok(())
+        }
     }
 
     /// Run local update sweeps across all positions
