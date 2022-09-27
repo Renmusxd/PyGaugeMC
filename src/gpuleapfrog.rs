@@ -2,6 +2,7 @@ use gaugemc::rand::prelude::*;
 use gaugemc::{GPUBackend, NDDualGraph, SiteIndex};
 use log::info;
 use num_traits::identities::Zero;
+use numpy::ndarray::parallel::prelude::{IntoParallelIterator, ParallelIterator};
 use numpy::ndarray::{Array1, Array2, Array3, Array5, ArrayView2, ArrayViewMut5, Axis};
 use numpy::{
     IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray6, PyReadonlyArray1, PyReadonlyArray2,
@@ -116,8 +117,9 @@ impl WindingNumberLeapfrog {
         allow_inverting: Option<bool>,
     ) -> PyResult<(Py<PyArray3<i32>>, Py<PyArray2<f32>>)> {
         let mut winding_nums =
-            Array3::<i32>::zeros((num_samples, self.graph.get_num_replicas(), 6));
-        let mut energies = Array2::<f32>::zeros((num_samples, self.graph.get_num_replicas()));
+            Array3::<i32>::zeros((num_samples, self.num_replicas - self.num_staging, 6));
+        let mut energies =
+            Array2::<f32>::zeros((num_samples, self.num_replicas - self.num_staging));
 
         let full_seed_steps_per_sample =
             full_seed_steps_per_sample.unwrap_or(self.num_replicas - self.num_staging);
@@ -292,6 +294,26 @@ impl WindingNumberLeapfrog {
             (_, _) => Err("Cannot provide only counts with no windings.".to_string()),
         }
         .map_err(PyValueError::new_err)
+    }
+
+    #[staticmethod]
+    pub fn standardize_winding_numbers(
+        py: Python,
+        ws: PyReadonlyArray2<i32>,
+    ) -> PyResult<Py<PyArray2<i32>>> {
+        if ws.shape()[1] != 6 {
+            return Err(PyValueError::new_err("Ws must have final dimension 6"));
+        }
+
+        let mut arr = ws.to_owned_array();
+        arr.axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .for_each(|mut row| {
+                let old = row.as_slice().unwrap();
+                let new = standardize_winding_number(old.try_into().unwrap());
+                row.iter_mut().zip(new).for_each(|(v, x)| *v = x);
+            });
+        Ok(arr.into_pyarray(py).to_owned())
     }
 }
 
