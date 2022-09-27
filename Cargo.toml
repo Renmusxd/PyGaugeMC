@@ -6,7 +6,7 @@ edition = "2021"
 
 [features]
 default = ["gpu-wgpu"]
-gpu-wgpu = ["gaugemc/gpu-wgpu", "pollster", "env_logger"]
+gpu-wgpu = ["gaugemc/gpu-wgpu", "pollster", "env_logger", "num-traits"]
 
 [lib]
 name = "py_gauge_mc"
@@ -20,9 +20,12 @@ panic = "abort"
 [dependencies]
 pollster = {version="^0.2",optional=true }
 env_logger = {version= ">=0.9",optional=true }
+num-traits = {version= ">=0.2",optional=true }
+log = ">=0.4"
 
 [dependencies.gaugemc]
-git = "https://github.com/Renmusxd/GaugeMC"
+#git = "https://github.com/Renmusxd/GaugeMC"
+path = "../GaugeTheoryMC"
 features = ["gpu-wgpu"]
 
 [dependencies.pyo3]

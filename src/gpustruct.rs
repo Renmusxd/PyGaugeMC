@@ -9,12 +9,18 @@ use numpy::{
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
+struct SkipDetails {
+    skip_last_global: Option<usize>,
+    skip_last_tempering: Option<usize>,
+}
+
 /// Unlike the Lattice class this maintains a set of graphs with internal state.
 #[pyclass]
 pub struct GPUGaugeTheory {
     bounds: SiteIndex,
     graph: GPUBackend,
     rng: Option<SmallRng>,
+    skip_details: SkipDetails,
 }
 
 #[pymethods]
@@ -28,33 +34,38 @@ impl GPUGaugeTheory {
     /// * `seed`: RNG seed.
     #[new]
     fn new(
-        t: usize,
-        x: usize,
-        y: usize,
-        z: usize,
+        shape: (usize, usize, usize, usize),
         vs: PyReadonlyArray2<f32>,
         initial_state: Option<PyReadonlyArray6<i32>>,
         seed: Option<u64>,
         device_id: Option<usize>,
+        skip_last_global: Option<usize>,
+        skip_last_tempering: Option<usize>,
     ) -> PyResult<Self> {
         // Initialize logging if not done.
         env_logger::try_init().unwrap_or(());
+        let (t, x, y, z) = shape;
         let rng = seed.map(SmallRng::seed_from_u64);
         let vn = vs.to_owned_array();
         let initial_state = initial_state.map(|state| state.to_owned_array());
-        let bounds = SiteIndex { t, x, y, z };
+        let bounds = SiteIndex::new(t, x, y, z);
         pollster::block_on(GPUBackend::new_async(
-            t,
-            x,
-            y,
-            z,
+            bounds.clone(),
             vn,
             initial_state,
             seed,
             device_id,
         ))
         .map_err(PyValueError::new_err)
-        .map(|graph| Self { bounds, graph, rng })
+        .map(|graph| Self {
+            bounds,
+            graph,
+            rng,
+            skip_details: SkipDetails {
+                skip_last_global,
+                skip_last_tempering,
+            },
+        })
     }
 
     /// Scale each potential by a factor stored in `scales` - given in order of replicas.
@@ -89,6 +100,12 @@ impl GPUGaugeTheory {
         }
     }
 
+    /// Copy and overwrite state from a location to another location.
+    fn copy_replica(&mut self, from: usize, to: usize, swap: Option<bool>) {
+        self.graph
+            .copy_state_on_gpu(from, to, swap.unwrap_or_default())
+    }
+
     /// Run local update sweeps across all positions
     /// # Arguments:
     /// * `num_updates`: number of updates to run
@@ -99,14 +116,15 @@ impl GPUGaugeTheory {
 
     /// Run a single sweep of global updates.
     fn run_global_update(&mut self) {
-        self.graph.run_global_sweep();
+        self.graph
+            .run_global_sweep(self.skip_details.skip_last_global);
     }
 
     /// Run a parallel tempering attempt between pairs:
     /// (2i + offset) and (2i + offset + 1)
     fn run_parallel_tempering(&mut self, offset: bool) -> PyResult<()> {
         self.graph
-            .run_parallel_tempering_sweep(offset)
+            .run_parallel_tempering_sweep(offset, self.skip_details.skip_last_tempering)
             .map_err(PyValueError::new_err)
     }
 
@@ -115,9 +133,14 @@ impl GPUGaugeTheory {
     }
 
     /// Get the state of all replicas, returns (num_replicas, t, x, y, z, 6)
-    fn get_graph_state(&mut self, py: Python) -> PyResult<Py<PyArray6<i32>>> {
+    /// if skip_last is set, num_replicas becomes num_replicas - skip_last
+    fn get_graph_state(
+        &mut self,
+        py: Python,
+        skip_last: Option<usize>,
+    ) -> PyResult<Py<PyArray6<i32>>> {
         self.graph
-            .get_state()
+            .get_state(skip_last)
             .map(|s| s.clone().into_pyarray(py).to_owned())
             .map_err(PyValueError::new_err)
     }
@@ -131,7 +154,7 @@ impl GPUGaugeTheory {
     /// Get the 6 winding numbers for each replica.
     fn get_winding_nums(&mut self, py: Python) -> PyResult<Py<PyArray2<i32>>> {
         self.graph
-            .get_winding_nums()
+            .get_winding_nums(None)
             .map(|w| w.into_pyarray(py).to_owned())
             .map_err(PyValueError::new_err)
     }
@@ -144,7 +167,7 @@ impl GPUGaugeTheory {
     fn get_energy(&mut self, py: Python) -> PyResult<Py<PyArray1<f32>>> {
         // sum t, x, y, z
         self.graph
-            .get_energy()
+            .get_energy(None)
             .map(|e| e.into_pyarray(py).to_owned())
             .map_err(PyValueError::new_err)
     }
@@ -173,14 +196,15 @@ impl GPUGaugeTheory {
         for i in 0..steps {
             self.run_local_update_native(local_updates_per_step);
             if run_global_updates {
-                self.graph.run_global_sweep();
+                self.graph
+                    .run_global_sweep(self.skip_details.skip_last_global);
             }
             if run_rotate_pcg {
                 self.graph.run_pcg_rotate();
             }
             if run_parallel_tempering {
                 self.graph
-                    .run_parallel_tempering_sweep(i % 2 == 1)
+                    .run_parallel_tempering_sweep(i % 2 == 1, self.skip_details.skip_last_tempering)
                     .map_err(PyValueError::new_err)?;
             }
         }
@@ -222,7 +246,7 @@ impl GPUGaugeTheory {
             )?;
             let windings = self
                 .graph
-                .get_winding_nums()
+                .get_winding_nums(None)
                 .map_err(PyValueError::new_err)?;
             sum_squares
                 .iter_mut()
@@ -273,7 +297,7 @@ impl GPUGaugeTheory {
                 )?;
                 let winding_nums = self
                     .graph
-                    .get_winding_nums()
+                    .get_winding_nums(None)
                     .map_err(PyValueError::new_err)?;
                 windings_row
                     .iter_mut()
@@ -323,13 +347,13 @@ impl GPUGaugeTheory {
                 )?;
                 let winding_nums = self
                     .graph
-                    .get_winding_nums()
+                    .get_winding_nums(None)
                     .map_err(PyValueError::new_err)?;
                 windings_row
                     .iter_mut()
                     .zip(winding_nums.iter().cloned())
                     .for_each(|(w, v)| *w = v);
-                let energies = self.graph.get_energy().map_err(PyValueError::new_err)?;
+                let energies = self.graph.get_energy(None).map_err(PyValueError::new_err)?;
                 energy_row
                     .iter_mut()
                     .zip(energies.iter().cloned())
@@ -378,7 +402,7 @@ impl GPUGaugeTheory {
                     Some(run_rotate_pcg),
                     Some(run_parallel_tempering),
                 )?;
-                let energies = self.graph.get_energy().map_err(PyValueError::new_err)?;
+                let energies = self.graph.get_energy(None).map_err(PyValueError::new_err)?;
                 energy_row
                     .iter_mut()
                     .zip(energies.iter().cloned())
