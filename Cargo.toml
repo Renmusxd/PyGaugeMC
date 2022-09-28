@@ -24,9 +24,7 @@ num-traits = {version= ">=0.2",optional=true }
 log = ">=0.4"
 
 [dependencies.gaugemc]
-path = "../GaugeTheoryMC"
-#git = "https://github.com/Renmusxd/GaugeMC"
-#branch = "SkipLast"
+git = "https://github.com/Renmusxd/GaugeMC"
 features = ["gpu-wgpu"]
 
 [dependencies.pyo3]
