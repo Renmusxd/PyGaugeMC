@@ -68,6 +68,10 @@ impl GPUGaugeTheory {
         })
     }
 
+    fn set_use_heatbath(&mut self, use_heatbath: Option<bool>) {
+        self.graph.set_heatbath(use_heatbath)
+    }
+
     /// Scale each potential by a factor stored in `scales` - given in order of replicas.
     fn scale_potentials_by_factor(&mut self, scale: f32) {
         let mut pots = self.graph.get_potentials().clone();
