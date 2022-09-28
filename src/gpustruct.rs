@@ -21,6 +21,7 @@ pub struct GPUGaugeTheory {
     graph: GPUBackend,
     rng: Option<SmallRng>,
     skip_details: SkipDetails,
+    debug_check_for_violations: bool,
 }
 
 #[pymethods]
@@ -65,11 +66,16 @@ impl GPUGaugeTheory {
                 skip_last_global,
                 skip_last_tempering,
             },
+            debug_check_for_violations: false,
         })
     }
 
     fn set_use_heatbath(&mut self, use_heatbath: Option<bool>) {
         self.graph.set_heatbath(use_heatbath)
+    }
+
+    fn set_debug_check_for_violations(&mut self, check: bool) {
+        self.debug_check_for_violations = check
     }
 
     /// Scale each potential by a factor stored in `scales` - given in order of replicas.
@@ -113,15 +119,29 @@ impl GPUGaugeTheory {
     /// Run local update sweeps across all positions
     /// # Arguments:
     /// * `num_updates`: number of updates to run
-    fn run_local_update(&mut self, num_updates: Option<usize>) {
+    fn run_local_update(&mut self, num_updates: Option<usize>) -> PyResult<()> {
         let num_updates = num_updates.unwrap_or(1);
-        self.run_local_update_native(num_updates);
+        self.run_local_update_native(num_updates)
+            .map_err(PyValueError::new_err)
     }
 
     /// Run a single sweep of global updates.
-    fn run_global_update(&mut self) {
+    fn run_global_update(&mut self) -> PyResult<()> {
         self.graph
             .run_global_sweep(self.skip_details.skip_last_global);
+        if self.debug_check_for_violations {
+            let violations = self
+                .graph
+                .get_edges_with_violations()
+                .map_err(PyValueError::new_err)?;
+            if !violations.is_empty() {
+                return Err(PyValueError::new_err(format!(
+                    "Found edges with violations after global update: {:?}",
+                    violations
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Run a parallel tempering attempt between pairs:
@@ -129,7 +149,20 @@ impl GPUGaugeTheory {
     fn run_parallel_tempering(&mut self, offset: bool) -> PyResult<()> {
         self.graph
             .run_parallel_tempering_sweep(offset, self.skip_details.skip_last_tempering)
-            .map_err(PyValueError::new_err)
+            .map_err(PyValueError::new_err)?;
+        if self.debug_check_for_violations {
+            let violations = self
+                .graph
+                .get_edges_with_violations()
+                .map_err(PyValueError::new_err)?;
+            if !violations.is_empty() {
+                return Err(PyValueError::new_err(format!(
+                    "Found edges with violations after parallel tempering: {:?}",
+                    violations
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn get_parallel_tempering_success_rate(&self) -> Vec<f64> {
@@ -198,18 +231,17 @@ impl GPUGaugeTheory {
         let run_parallel_tempering = run_parallel_tempering.unwrap_or(false);
 
         for i in 0..steps {
-            self.run_local_update_native(local_updates_per_step);
+            self.run_local_update(Some(local_updates_per_step))?;
+
             if run_global_updates {
-                self.graph
-                    .run_global_sweep(self.skip_details.skip_last_global);
+                self.run_global_update()?;
             }
+
             if run_rotate_pcg {
                 self.graph.run_pcg_rotate();
             }
             if run_parallel_tempering {
-                self.graph
-                    .run_parallel_tempering_sweep(i % 2 == 1, self.skip_details.skip_last_tempering)
-                    .map_err(PyValueError::new_err)?;
+                self.run_parallel_tempering(i % 2 == 1)?;
             }
         }
         Ok(())
@@ -455,15 +487,41 @@ impl GPUGaugeTheory {
             .collect();
         Ok(res)
     }
+
+    pub fn plaquettes_next_to_edge(
+        &self,
+        loc: (usize, usize, usize, usize),
+        dim: usize,
+    ) -> Vec<(usize, usize, usize, usize, usize)> {
+        let site = loc.into();
+        let (pos, neg) = NDDualGraph::plaquettes_next_to_edge(&site, dim.into(), &self.bounds);
+        let f = |(s, p): (SiteIndex, usize)| (s.t, s.x, s.y, s.z, p);
+        pos.into_iter().chain(neg.into_iter()).map(f).collect()
+    }
 }
 
 impl GPUGaugeTheory {
-    fn run_local_update_native(&mut self, num_updates: usize) {
-        for _ in 0..num_updates {
-            NDDualGraph::get_cube_dim_and_offset_iterator().for_each(|(dims, offset)| {
+    fn run_local_update_native(&mut self, num_updates: usize) -> Result<(), String> {
+        for i in 0..num_updates {
+            NDDualGraph::get_cube_dim_and_offset_iterator().try_for_each(|(dims, offset)| {
                 let leftover = NDDualGraph::get_leftover_dim(&dims);
                 self.graph.run_local_sweep(&dims, leftover, offset);
-            })
+                if self.debug_check_for_violations {
+                    self.graph.get_edges_with_violations().and_then(|violations| {
+                        if !violations.is_empty() {
+                            Err(format!(
+                                "Found edges with violations after local update {} on dims {:?} (offset {}): {:?}",
+                                i, dims, offset, violations
+                            ))
+                        } else {
+                            Ok(())
+                        }
+                    })
+                } else {
+                    Ok(())
+                }
+            })?;
         }
+        Ok(())
     }
 }
