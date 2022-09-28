@@ -63,6 +63,13 @@ impl WindingNumberLeapfrog {
         })
     }
 
+    fn set_use_heatbath(&mut self, use_heatbath: Option<bool>) {
+        self.graph.set_heatbath(use_heatbath)
+    }
+    fn set_optmize_args(&mut self, optimize_args: Option<bool>) {
+        self.graph.set_optimize_args(optimize_args)
+    }
+
     /// Get the parallel tempering success rate.
     fn get_parallel_tempering_success(&self, py: Python) -> Py<PyArray1<f64>> {
         let mut succ = self.graph.get_parallel_tempering_success_rate();
