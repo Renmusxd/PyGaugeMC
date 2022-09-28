@@ -73,6 +73,9 @@ impl GPUGaugeTheory {
     fn set_use_heatbath(&mut self, use_heatbath: Option<bool>) {
         self.graph.set_heatbath(use_heatbath)
     }
+    fn set_optmize_args(&mut self, optimize_args: Option<bool>) {
+        self.graph.set_optimize_args(optimize_args)
+    }
 
     fn set_debug_check_for_violations(&mut self, check: bool) {
         self.debug_check_for_violations = check
