@@ -4,7 +4,7 @@ use numpy::ndarray::parallel::prelude::*;
 use numpy::ndarray::{Array2, Array3, Axis};
 use numpy::{
     ndarray, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray6, PyReadonlyArray2,
-    PyReadonlyArray6,
+    PyReadonlyArray5, PyReadonlyArray6,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -111,6 +111,13 @@ impl GPUGaugeTheory {
             self.graph.write_potentials(vn);
             Ok(())
         }
+    }
+
+    fn write_state(&mut self, replica: usize, vn: PyReadonlyArray5<i32>) -> PyResult<()> {
+        let vn = vn.to_owned_array();
+        self.graph
+            .write_state(replica, vn.view())
+            .map_err(PyValueError::new_err)
     }
 
     /// Copy and overwrite state from a location to another location.
