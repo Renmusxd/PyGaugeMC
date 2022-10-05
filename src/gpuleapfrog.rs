@@ -69,6 +69,9 @@ impl WindingNumberLeapfrog {
     fn set_optmize_args(&mut self, optimize_args: Option<bool>) {
         self.graph.set_optimize_args(optimize_args)
     }
+    fn wait_for_gpu(&mut self) {
+        self.graph.wait_for_gpu();
+    }
 
     /// Get the parallel tempering success rate.
     fn get_parallel_tempering_success(&self, py: Python) -> Py<PyArray1<f64>> {
@@ -100,6 +103,46 @@ impl WindingNumberLeapfrog {
             self.simulate_local(local_updates_before_tempering);
             self.run_parallel_tempering(i % 2 == initial_tempering_offset)?;
             self.simulate_local(local_updates_after_tempering);
+            self.graph.run_pcg_rotate_offset(i % 2 == 1);
+        }
+        Ok(())
+    }
+
+    /// Repeatedly seed states, same as `repeated_seed_and_measure` without the measurements.
+    /// `num_iters`: number of total repetitions.
+    /// `full_seed_steps_per_sample`: Number of seed then simulate updates per sample.
+    /// `local_updates_after_seeding`: number of samples immediately after seeding.
+    /// `updates_between_seeding`: number of update cycles after seeding step is taken.
+    /// `local_updates_before_tempering`: After global updates, but before parallel tempering.
+    /// `local_updates_after_tempering`: After all other updates but before step is taken.
+    /// `allow_inverting`: Allow seeding to invert winding numbers.
+    fn repeated_seed(
+        &mut self,
+        num_iters: usize,
+        full_seed_steps_per_sample: Option<usize>,
+        local_updates_after_seeding: Option<usize>,
+        updates_between_seeding: Option<usize>,
+        local_updates_before_tempering: Option<usize>,
+        local_updates_after_tempering: Option<usize>,
+        allow_inverting: Option<bool>,
+    ) -> PyResult<()> {
+        let full_seed_steps_per_sample =
+            full_seed_steps_per_sample.unwrap_or(self.num_replicas - self.num_staging);
+        let local_updates_after_seeding = local_updates_after_seeding.unwrap_or(1);
+        let updates_between_seeding = updates_between_seeding.unwrap_or(1);
+        let local_updates_before_tempering = local_updates_before_tempering.unwrap_or(1);
+        let local_updates_after_tempering = local_updates_after_tempering.unwrap_or(1);
+        for _ in 0..num_iters {
+            for i in 0..full_seed_steps_per_sample {
+                self.seed_and_simulate_step(
+                    local_updates_after_seeding,
+                    updates_between_seeding,
+                    local_updates_before_tempering,
+                    local_updates_after_tempering,
+                    allow_inverting,
+                    Some(i % 2),
+                )?;
+            }
         }
         Ok(())
     }

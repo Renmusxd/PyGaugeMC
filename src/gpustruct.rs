@@ -81,6 +81,10 @@ impl GPUGaugeTheory {
         self.debug_check_for_violations = check
     }
 
+    fn wait_for_gpu(&mut self) {
+        self.graph.wait_for_gpu();
+    }
+
     /// Scale each potential by a factor stored in `scales` - given in order of replicas.
     fn scale_potentials_by_factor(&mut self, scale: f32) {
         let mut pots = self.graph.get_potentials().clone();
