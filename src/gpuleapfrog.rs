@@ -25,6 +25,13 @@ pub struct WindingNumberLeapfrog {
     ws: Vec<[i32; 6]>,
     cumulative_counts: Vec<usize>,
     num_staging: usize,
+
+    // Options for debugging
+    should_run_local: bool,
+    should_run_global: bool,
+    should_run_parallel_tempering: bool,
+    should_run_pcg_rotate: bool,
+    should_run_seeding: bool,
 }
 
 #[pymethods]
@@ -60,7 +67,33 @@ impl WindingNumberLeapfrog {
             ws: Default::default(),
             cumulative_counts: Default::default(),
             num_staging: 0,
+            should_run_local: true,
+            should_run_global: true,
+            should_run_parallel_tempering: true,
+            should_run_pcg_rotate: true,
+            should_run_seeding: true,
         })
+    }
+
+    /// Enable/Disable all local updates.
+    pub fn set_run_local(&mut self, val: bool) {
+        self.should_run_local = val;
+    }
+    /// Enable/Disable all global updates.
+    pub fn set_run_global(&mut self, val: bool) {
+        self.should_run_global = val;
+    }
+    /// Enable/Disable all parallel tempering updates.
+    pub fn set_run_parallel_tempering(&mut self, val: bool) {
+        self.should_run_parallel_tempering = val;
+    }
+    /// Enable/Disable all pcg rotates.
+    pub fn set_run_pcg_rotate(&mut self, val: bool) {
+        self.should_run_pcg_rotate = val;
+    }
+    /// Enable/Disable all seeding updates.
+    pub fn set_run_seeding(&mut self, val: bool) {
+        self.should_run_seeding = val;
     }
 
     fn set_use_heatbath(&mut self, use_heatbath: Option<bool>) {
@@ -103,9 +136,16 @@ impl WindingNumberLeapfrog {
             self.simulate_local(local_updates_before_tempering);
             self.run_parallel_tempering(i % 2 == initial_tempering_offset)?;
             self.simulate_local(local_updates_after_tempering);
-            self.graph.run_pcg_rotate_offset(i % 2 == 1);
+            self.rotate_pcg(i % 2 == 1);
         }
         Ok(())
+    }
+
+    pub fn rotate_pcg(&mut self, offset: bool) {
+        if !self.should_run_pcg_rotate {
+            return;
+        }
+        self.graph.run_pcg_rotate_offset(offset);
     }
 
     /// Repeatedly seed states, same as `repeated_seed_and_measure` without the measurements.
@@ -215,6 +255,9 @@ impl WindingNumberLeapfrog {
     }
 
     fn simulate_local(&mut self, num_updates: usize) {
+        if !self.should_run_local {
+            return;
+        }
         for _ in 0..num_updates {
             NDDualGraph::get_cube_dim_and_offset_iterator().for_each(|(dims, offset)| {
                 let leftover = NDDualGraph::get_leftover_dim(&dims);
@@ -224,10 +267,16 @@ impl WindingNumberLeapfrog {
     }
 
     fn run_global_sweep(&mut self) {
+        if !self.should_run_global {
+            return;
+        }
         self.graph.run_global_sweep(Some(self.num_staging));
     }
 
     fn run_parallel_tempering(&mut self, offset: bool) -> PyResult<()> {
+        if !self.should_run_parallel_tempering {
+            return Ok(());
+        }
         self.graph
             .run_parallel_tempering_sweep(offset, Some(self.num_staging))
             .map_err(PyValueError::new_err)
@@ -373,7 +422,7 @@ impl WindingNumberLeapfrog {
         allow_inverting: Option<bool>,
         rng: &mut R,
     ) -> Result<(), String> {
-        if self.ws.is_empty() {
+        if self.ws.is_empty() || !self.should_run_seeding {
             return Ok(());
         }
 
