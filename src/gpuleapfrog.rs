@@ -109,7 +109,7 @@ impl WindingNumberLeapfrog {
     /// Get the parallel tempering success rate.
     fn get_parallel_tempering_success(&self, py: Python) -> Py<PyArray1<f64>> {
         let mut succ = self.graph.get_parallel_tempering_success_rate();
-        succ.resize(self.num_replicas - self.num_staging, 0.0);
+        succ.resize(self.num_replicas - self.num_staging - 1, 0.0);
         Array1::from_vec(succ).to_pyarray(py).to_owned()
     }
 
