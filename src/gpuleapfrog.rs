@@ -425,17 +425,8 @@ impl WindingNumberLeapfrog {
         if self.ws.is_empty() || !self.should_run_seeding {
             return Ok(());
         }
-
         let allow_inverting = allow_inverting.unwrap_or(true);
-        let choice =
-            rng.gen_range(0usize..self.cumulative_counts.last().copied().unwrap_or_default());
-        let res = self.cumulative_counts.binary_search(&choice);
-        let index = match res {
-            // Consider [1, 1] ==> [1,2]
-            // rang(0,2) is {0,1} which should select with 50% either case.
-            Ok(x) => x + 1,
-            Err(x) => x,
-        };
+        let index = get_rand_from_cumulative_distr(&self.cumulative_counts, rng);
         info!("Seeding winding {}: {:?}", index, self.ws[index]);
         if index < self.num_staging {
             info!("\tSeeding from staging ground.");
@@ -660,5 +651,62 @@ fn standardize_winding_number(w: [i32; 6]) -> [i32; 6] {
         }
         // todo: improve
         _ => w,
+    }
+}
+
+fn get_rand_from_cumulative_distr<R: Rng>(cumulative_counts: &[usize], rng: &mut R) -> usize {
+    let choice = rng.gen_range(0usize..cumulative_counts.last().copied().unwrap_or_default());
+    get_from_cumulative_distr(choice, cumulative_counts)
+}
+
+fn get_from_cumulative_distr(choice: usize, cumulative_counts: &[usize]) -> usize {
+    assert!(
+        (0..cumulative_counts.len() - 1).all(|i| cumulative_counts[i] < cumulative_counts[i + 1])
+    );
+    let res = cumulative_counts.binary_search(&choice);
+    match res {
+        // Consider [1, 1] ==> [1,2]
+        // rang(0,2) is {0,1} which should select with 50% either case.
+        Ok(x) => x + 1,
+        Err(x) => x,
+    }
+}
+
+#[cfg(test)]
+mod leapfrog_tests {
+    use super::*;
+
+    #[test]
+    fn test_cumulative_search_even() {
+        let upto = 10usize;
+        let list = (0..upto).map(|i| i + 1).collect::<Vec<_>>();
+        let max = list.last().copied().unwrap();
+        let found = (0..max)
+            .map(|choice| get_from_cumulative_distr(choice, &list))
+            .collect::<Vec<_>>();
+
+        (0..upto).for_each(|i| {
+            let n = found.iter().copied().filter(|x| i.eq(x)).count();
+            assert_eq!(1, n);
+        });
+    }
+
+    #[test]
+    fn test_cumulative_search() {
+        let upto = 10usize;
+        let list = (0..upto).map(|i| i.pow(2)).collect::<Vec<_>>();
+        let max = list.last().copied().unwrap();
+        let found = (0..max)
+            .map(|choice| get_from_cumulative_distr(choice, &list))
+            .collect::<Vec<_>>();
+
+        let mut last = 0;
+        (0..upto).for_each(|i| {
+            let sqr = i.pow(2);
+            let d = sqr - last;
+            let n = found.iter().copied().filter(|x| i.eq(x)).count();
+            assert_eq!(d, n);
+            last = sqr;
+        });
     }
 }

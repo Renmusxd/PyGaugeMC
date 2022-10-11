@@ -1,4 +1,3 @@
-use gaugemc::rand::prelude::*;
 use gaugemc::*;
 use numpy::ndarray::parallel::prelude::*;
 use numpy::ndarray::{Array2, Array3, Axis};
@@ -19,7 +18,6 @@ struct SkipDetails {
 pub struct GPUGaugeTheory {
     bounds: SiteIndex,
     graph: GPUBackend,
-    rng: Option<SmallRng>,
     skip_details: SkipDetails,
     debug_check_for_violations: bool,
 }
@@ -46,7 +44,6 @@ impl GPUGaugeTheory {
         // Initialize logging if not done.
         env_logger::try_init().unwrap_or(());
         let (t, x, y, z) = shape;
-        let rng = seed.map(SmallRng::seed_from_u64);
         let vn = vs.to_owned_array();
         let initial_state = initial_state.map(|state| state.to_owned_array());
         let bounds = SiteIndex::new(t, x, y, z);
@@ -61,7 +58,6 @@ impl GPUGaugeTheory {
         .map(|graph| Self {
             bounds,
             graph,
-            rng,
             skip_details: SkipDetails {
                 skip_last_global,
                 skip_last_tempering,
