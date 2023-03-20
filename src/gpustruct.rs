@@ -1,9 +1,9 @@
 use gaugemc::*;
 use numpy::ndarray::parallel::prelude::*;
-use numpy::ndarray::{Array2, Array3, Axis};
+use numpy::ndarray::{Array, Array1, Array2, Array3, Array5, ArrayD, Axis, Dim};
 use numpy::{
-    ndarray, IntoPyArray, PyArray1, PyArray2, PyArray3, PyArray6, PyReadonlyArray2,
-    PyReadonlyArray5, PyReadonlyArray6,
+    ndarray, IntoPyArray, IxDyn, PyArray, PyArray1, PyArray2, PyArray3, PyArray5, PyArray6,
+    PyArrayDyn, PyReadonlyArray2, PyReadonlyArray5, PyReadonlyArray6,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -457,6 +457,54 @@ impl GPUGaugeTheory {
             })
             .map_err(PyValueError::new_err)?;
         Ok(energies.into_pyarray(py).to_owned())
+    }
+
+    /// Run simulations and record energies.
+    /// # Arguments
+    /// * `num_samples`: number of samples to take
+    /// * `local_updates_per_step`: between each optional global update, run local updates.
+    /// * `steps_per_sample`: between each sample, run global updates and local updates.
+    /// * `run_global_updates`: enable/disable global updates.
+    /// * `run_parallel_tempering`: run parallel tempering after the global update.
+    fn simulate_and_get_states(
+        &mut self,
+        py: Python,
+        num_samples: usize,
+        local_updates_per_step: Option<usize>,
+        steps_per_sample: Option<usize>,
+        run_global_updates: Option<bool>,
+        run_rotate_pcg: Option<bool>,
+        run_parallel_tempering: Option<bool>,
+    ) -> PyResult<Py<PyArrayDyn<i32>>> {
+        let local_updates_per_step = local_updates_per_step.unwrap_or(1);
+        let steps_per_sample = steps_per_sample.unwrap_or(1);
+        let run_global_updates = run_global_updates.unwrap_or(true);
+        let run_rotate_pcg = run_rotate_pcg.unwrap_or(true);
+        let run_parallel_tempering = run_parallel_tempering.unwrap_or(false);
+
+        let num_replicas = self.graph.get_num_replicas();
+        let SiteIndex { x, y, z, t, .. } = self.bounds;
+
+        let mut states = ArrayD::<i32>::zeros(IxDyn(&[num_samples, num_replicas, t, x, y, z, 6]));
+        states
+            .axis_iter_mut(Axis(0))
+            .try_for_each(|mut w_state| -> PyResult<()> {
+                self.simulate(
+                    Some(local_updates_per_step),
+                    Some(steps_per_sample),
+                    Some(run_global_updates),
+                    Some(run_rotate_pcg),
+                    Some(run_parallel_tempering),
+                )?;
+                let state = self.graph.get_state(None).map_err(PyValueError::new_err)?;
+                w_state
+                    .iter_mut()
+                    .zip(state.iter())
+                    .for_each(|(w, r)| *w = *r);
+                Ok(())
+            })
+            .map_err(PyValueError::new_err)?;
+        Ok(states.into_pyarray(py).to_owned())
     }
 
     pub fn set_winding_num_cpu(&mut self) {
