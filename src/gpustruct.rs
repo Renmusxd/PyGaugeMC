@@ -1,8 +1,8 @@
 use gaugemc::*;
 use numpy::ndarray::parallel::prelude::*;
-use numpy::ndarray::{Array, Array1, Array2, Array3, Array5, ArrayD, Axis, Dim};
+use numpy::ndarray::{Array2, Array3, ArrayD, Axis};
 use numpy::{
-    ndarray, IntoPyArray, IxDyn, PyArray, PyArray1, PyArray2, PyArray3, PyArray5, PyArray6,
+    ndarray, IntoPyArray, IxDyn, PyArray1, PyArray2, PyArray3, PyArray6,
     PyArrayDyn, PyReadonlyArray2, PyReadonlyArray5, PyReadonlyArray6,
 };
 use pyo3::exceptions::PyValueError;
@@ -37,7 +37,7 @@ impl GPUGaugeTheory {
         vs: PyReadonlyArray2<f32>,
         initial_state: Option<PyReadonlyArray6<i32>>,
         seed: Option<u64>,
-        device_id: Option<usize>,
+        device_id: Option<u32>,
         skip_last_global: Option<usize>,
         skip_last_tempering: Option<usize>,
     ) -> PyResult<Self> {
@@ -554,7 +554,7 @@ impl GPUGaugeTheory {
         let site = loc.into();
         let (pos, neg) = NDDualGraph::plaquettes_next_to_edge(&site, dim.into(), &self.bounds);
         let f = |(s, p): (SiteIndex, usize)| (s.t, s.x, s.y, s.z, p);
-        pos.into_iter().chain(neg.into_iter()).map(f).collect()
+        pos.into_iter().chain(neg).map(f).collect()
     }
 }
 

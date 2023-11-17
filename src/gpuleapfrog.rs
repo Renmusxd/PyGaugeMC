@@ -45,7 +45,7 @@ impl WindingNumberLeapfrog {
         y: usize,
         z: usize,
         seed: Option<u64>,
-        device_id: Option<usize>,
+        device_id: Option<u32>,
     ) -> PyResult<Self> {
         env_logger::try_init().unwrap_or(());
 

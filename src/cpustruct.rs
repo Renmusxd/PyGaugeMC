@@ -154,7 +154,7 @@ impl GaugeTheory {
             bounds.y * bounds.z,
         ];
         sum.iter_mut()
-            .zip(plane_sizes.into_iter())
+            .zip(plane_sizes)
             .for_each(|(s, n)| {
                 *s /= n as i32;
             });
