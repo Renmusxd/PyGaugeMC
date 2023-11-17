@@ -554,7 +554,7 @@ impl GPUGaugeTheory {
         let site = loc.into();
         let (pos, neg) = NDDualGraph::plaquettes_next_to_edge(&site, dim.into(), &self.bounds);
         let f = |(s, p): (SiteIndex, usize)| (s.t, s.x, s.y, s.z, p);
-        pos.into_iter().chain(neg.into_iter()).map(f).collect()
+        pos.into_iter().chain(neg).map(f).collect()
     }
 }
 

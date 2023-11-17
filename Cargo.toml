@@ -18,7 +18,7 @@ codegen-units = 1
 panic = "abort"
 
 [dependencies]
-pollster = {version="^0.2",optional=true }
+pollster = {version= ">=0.3",optional=true }
 env_logger = {version= ">=0.10",optional=true }
 num-traits = {version= ">=0.2",optional=true }
 log = ">=0.4"
@@ -28,8 +28,8 @@ git = "https://github.com/Renmusxd/GaugeMC"
 features = ["gpu-wgpu"]
 
 [dependencies.pyo3]
-version = ">=0.18"
+version = ">=0.20"
 features = ["extension-module"]
 
 [dependencies.numpy]
-version = ">=0.18"
+version = ">=0.20"
