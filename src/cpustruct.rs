@@ -16,6 +16,7 @@ pub struct GaugeTheory {
 impl GaugeTheory {
     /// Construct a new instance.
     #[new]
+    #[pyo3(signature = (t, x, y, z, vs, seed=None))]
     fn new(
         t: usize,
         x: usize,
@@ -35,6 +36,7 @@ impl GaugeTheory {
         (bounds.t, bounds.x, bounds.y, bounds.z)
     }
 
+    #[pyo3(signature = (num_updates=None))]
     fn run_local_update(&mut self, num_updates: Option<usize>) {
         let num_updates = num_updates.unwrap_or(1);
         for _ in 0..num_updates {
@@ -46,11 +48,13 @@ impl GaugeTheory {
         self.graph.global_update_sweep(self.rng.as_mut())
     }
 
+    #[pyo3(signature = (t, x, y, z, p, amount=None))]
     fn add_flux(&mut self, t: usize, x: usize, y: usize, z: usize, p: usize, amount: Option<i32>) {
         self.graph
             .add_flux(SiteIndex { t, x, y, z }, p, amount.unwrap_or(1));
     }
 
+    #[pyo3(signature = (dima, dimb, dimc, offset=None))]
     fn update_all_cubes(&mut self, dima: usize, dimb: usize, dimc: usize, offset: Option<bool>) {
         let dims = [
             Dimension::from(dima),
@@ -96,23 +100,25 @@ impl GaugeTheory {
         self.graph.num_planes()
     }
 
-    fn get_graph_state(&self, py: Python) -> Py<PyArray5<i32>> {
+    fn get_graph_state<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray5<i32>> {
         let graph = self.graph.clone_graph();
-        graph.into_pyarray(py).to_owned()
+        graph.into_pyarray_bound(py).to_owned()
     }
 
-    fn get_winding_nums(&self, py: Python) -> Py<PyArray1<i32>> {
+    fn get_winding_nums<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i32>> {
         // sum t, x, y, z
         let sum = self.get_winding_num_native();
-        sum.into_pyarray(py).to_owned()
+        sum.into_pyarray_bound(py).to_owned()
     }
 
-    fn simulate_and_get_winding_variance(
+    #[pyo3(signature = (num_steps, local_updates_per_step=None))]
+
+    fn simulate_and_get_winding_variance<'py>(
         &mut self,
-        py: Python,
+        py: Python<'py>,
         num_steps: usize,
         local_updates_per_step: Option<usize>,
-    ) -> Py<PyArray1<f64>> {
+    ) -> Bound<'py, PyArray1<f64>> {
         let local_updates_per_step = local_updates_per_step.unwrap_or(1);
 
         let mut sum_squares = Array1::<f64>::zeros((6,));
@@ -131,7 +137,7 @@ impl GaugeTheory {
         sum_squares
             .iter_mut()
             .for_each(|s| *s /= num_steps as f64);
-        sum_squares.into_pyarray(py).to_owned()
+        sum_squares.into_pyarray_bound(py).to_owned()
     }
 }
 

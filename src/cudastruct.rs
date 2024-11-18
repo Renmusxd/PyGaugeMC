@@ -87,10 +87,10 @@ impl CudaGaugeTheory {
     }
 
     /// Get the state of all replicas, returns (num_replicas, t, x, y, z, 4)
-    fn get_edge_violations(&mut self, py: Python) -> PyResult<Py<PyArray6<i32>>> {
+    fn get_edge_violations<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray6<i32>>> {
         self.graph
             .get_edge_violations()
-            .map(|s| s.clone().into_pyarray(py).to_owned())
+            .map(|s| s.clone().into_pyarray_bound(py).to_owned())
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
     }

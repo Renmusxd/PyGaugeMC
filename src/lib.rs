@@ -14,8 +14,6 @@ use crate::gpuleapfrog::*;
 #[cfg(feature = "gpu-wgpu")]
 use crate::gpustruct::*;
 use cudarc::curand::CudaRng;
-use gaugemc::rand::random;
-use gaugemc::CudaError;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -33,7 +31,7 @@ fn test_cudarand() -> PyResult<bool> {
 }
 
 #[pymodule]
-fn py_gauge_mc(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn py_gauge_mc(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<GaugeTheory>()?;
     #[cfg(feature = "gpu-cuda")]
     m.add_class::<CudaGaugeTheory>()?;
