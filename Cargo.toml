@@ -5,8 +5,9 @@ authors = ["Sumner Hearth <sumnernh@gmail.com>"]
 edition = "2021"
 
 [features]
-default = ["gpu-wgpu"]
+default = ["gpu-cuda"]
 gpu-wgpu = ["gaugemc/gpu-wgpu", "pollster", "env_logger", "num-traits"]
+gpu-cuda = ["gaugemc/gpu-cuda", "env_logger", "cudarc"]
 
 [lib]
 name = "py_gauge_mc"
@@ -18,18 +19,20 @@ codegen-units = 1
 panic = "abort"
 
 [dependencies]
-pollster = {version= ">=0.3",optional=true }
-env_logger = {version= ">=0.10",optional=true }
-num-traits = {version= ">=0.2",optional=true }
-log = ">=0.4"
+pollster = { version = "0.3", optional = true }
+cudarc = { version = "*", optional = true, features = ["cuda-version-from-build-system"] }
+env_logger = { version = "0.11", optional = true }
+num-traits = { version = "0.2", optional = true }
+log = "0.4"
 
 [dependencies.gaugemc]
 git = "https://github.com/Renmusxd/GaugeMC"
-features = ["gpu-wgpu"]
+#path = "../GaugeTheoryMC"
+default-features = false
 
 [dependencies.pyo3]
-version = ">=0.20"
+version = "0.21"
 features = ["extension-module"]
 
 [dependencies.numpy]
-version = ">=0.20"
+version = "0.21"
