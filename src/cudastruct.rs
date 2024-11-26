@@ -1,5 +1,8 @@
 use gaugemc::{CudaBackend, DualState, SiteIndex};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArray6, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray6};
+use numpy::{
+    IntoPyArray, PyArray1, PyArray2, PyArray6, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
+    PyReadonlyArray6, PyUntypedArrayMethods,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -10,6 +13,7 @@ pub struct CudaGaugeTheory {
     graph: CudaBackend,
     debug_check_for_violations: bool,
     num_replicas: usize,
+    vnn: usize,
 }
 
 #[pymethods]
@@ -34,6 +38,7 @@ impl CudaGaugeTheory {
         env_logger::try_init().unwrap_or(());
         let (t, x, y, z) = shape;
         let vn = vs.to_owned_array();
+        let vnn = vn.shape()[1];
         let num_replicas = vn.shape()[0];
         let chemical_potentials = chemical_potentials.map(|x| x.to_owned_array());
         let initial_state = initial_state.map(|state| state.to_owned_array());
@@ -46,25 +51,48 @@ impl CudaGaugeTheory {
             device_id,
             chemical_potentials,
         )
-            .map_err(|x| x.to_string())
-            .map_err(PyValueError::new_err)
-            .map(|graph| Self {
-                bounds,
-                graph,
-                debug_check_for_violations: false,
-                num_replicas,
-            })
+        .map_err(|x| x.to_string())
+        .map_err(PyValueError::new_err)
+        .map(|graph| Self {
+            bounds,
+            graph,
+            debug_check_for_violations: false,
+            num_replicas,
+            vnn,
+        })
+    }
+
+    fn set_vns(&mut self, vs: PyReadonlyArray2<f32>) -> PyResult<()> {
+        let expected_shape = [self.num_replicas, self.vnn];
+        let found_shape = vs.shape();
+        if &expected_shape != found_shape {
+            Err(PyValueError::new_err(format!(
+                "Expected shape {:?} but found shape {:?}",
+                expected_shape, found_shape
+            )))
+        } else {
+            let vs = vs.as_array();
+            self.graph
+                .set_vns(vs)
+                .map_err(|x| x.to_string())
+                .map_err(PyValueError::new_err)
+        }
     }
 
     fn get_actions<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        self.graph.get_action_per_replica()
+        self.graph
+            .get_action_per_replica()
             .map(|s| s.into_pyarray_bound(py))
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
     }
 
-    fn get_plaquette_counts<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray2<u32>>> {
-        self.graph.get_plaquette_counts()
+    fn get_plaquette_counts<'py>(
+        &mut self,
+        py: Python<'py>,
+    ) -> PyResult<Bound<'py, PyArray2<u32>>> {
+        self.graph
+            .get_plaquette_counts()
             .map(|s| s.into_pyarray_bound(py))
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
@@ -109,11 +137,12 @@ impl CudaGaugeTheory {
     fn run_parallel_tempering(&mut self, offset: Option<usize>) -> PyResult<()> {
         let offset = offset.unwrap_or_default();
         let num_pairs = (self.num_replicas - offset) / 2;
-        let swaps = (0..num_pairs).map(|i| {
-            (2 * i + offset, 2 * i + offset + 1)
-        }).collect::<Vec<_>>();
+        let swaps = (0..num_pairs)
+            .map(|i| (2 * i + offset, 2 * i + offset + 1))
+            .collect::<Vec<_>>();
 
-        self.graph.parallel_tempering_step(&swaps)
+        self.graph
+            .parallel_tempering_step(&swaps)
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
     }
