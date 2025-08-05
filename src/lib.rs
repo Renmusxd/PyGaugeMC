@@ -19,11 +19,11 @@ use pyo3::prelude::*;
 
 #[pyfunction]
 fn test_cudarand() -> PyResult<bool> {
-    let device = cudarc::driver::CudaDevice::new(0)
-        .map_err(|x| x.to_string())
-        .map_err(PyValueError::new_err)?;
+    let ctx =
+        cudarc::driver::CudaContext::new(0).map_err(|e| PyValueError::new_err(format!("{e:?}")))?;
+    let stream = ctx.default_stream();
 
-    let cuda_rng = CudaRng::new(0, device.clone())
+    let cuda_rng = CudaRng::new(0, stream.clone())
         .map_err(|x| x.to_string())
         .map_err(PyValueError::new_err)?;
 
