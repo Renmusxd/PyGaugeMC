@@ -1,5 +1,5 @@
 wheel:
-	maturin build --release --strip
+	maturin build --release --strip -i python
 
 .PHONY: clean
 clean:

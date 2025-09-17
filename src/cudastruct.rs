@@ -1,7 +1,7 @@
 use gaugemc::{CudaBackend, DualState, SiteIndex};
 use numpy::{
-    IntoPyArray, PyArray1, PyArray2, PyArray6, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
-    PyReadonlyArray6, PyUntypedArrayMethods,
+    IntoPyArray, PyArray1, PyArray2, PyArray5, PyArray6, PyArrayMethods, PyReadonlyArray1,
+    PyReadonlyArray2, PyReadonlyArray6, PyUntypedArrayMethods,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -94,6 +94,33 @@ impl CudaGaugeTheory {
         self.graph
             .get_plaquette_counts()
             .map(|s| s.into_pyarray_bound(py))
+            .map_err(|x| x.to_string())
+            .map_err(PyValueError::new_err)
+    }
+
+    fn accumulate_plaquette_pairs(
+        &mut self,
+        max_absolute_integer: u32,
+        max_distance_from_root: u32,
+        plaquette_type: u32,
+    ) -> PyResult<()> {
+        self.graph
+            .accumulate_plaquette_pair_counts(
+                max_absolute_integer,
+                max_distance_from_root,
+                plaquette_type,
+            )
+            .map_err(|x| x.to_string())
+            .map_err(PyValueError::new_err)
+    }
+
+    fn get_plaquette_pairs<'py>(
+        &mut self,
+        py: Python<'py>,
+    ) -> PyResult<Option<Bound<'py, PyArray5<u32>>>> {
+        self.graph
+            .get_plaquette_pair_counts()
+            .map(|s| s.map(|s| s.into_pyarray_bound(py)))
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
     }
