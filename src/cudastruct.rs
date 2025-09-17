@@ -125,6 +125,10 @@ impl CudaGaugeTheory {
             .map_err(PyValueError::new_err)
     }
 
+    fn clear_plaquette_pairs(&mut self) {
+        self.graph.clear_plaquette_pair_counts();
+    }
+
     fn wait_for_gpu(&mut self) -> PyResult<()> {
         self.graph
             .wait_for_gpu()
