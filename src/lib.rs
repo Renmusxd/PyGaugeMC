@@ -23,7 +23,7 @@ fn test_cudarand() -> PyResult<bool> {
         cudarc::driver::CudaContext::new(0).map_err(|e| PyValueError::new_err(format!("{e:?}")))?;
     let stream = ctx.default_stream();
 
-    let cuda_rng = CudaRng::new(0, stream.clone())
+    let _cuda_rng = CudaRng::new(0, stream.clone())
         .map_err(|x| x.to_string())
         .map_err(PyValueError::new_err)?;
 

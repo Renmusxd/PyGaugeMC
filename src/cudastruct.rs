@@ -82,7 +82,7 @@ impl CudaGaugeTheory {
     fn get_actions<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
         self.graph
             .get_action_per_replica()
-            .map(|s| s.into_pyarray_bound(py))
+            .map(|s| s.into_pyarray(py))
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
     }
@@ -93,7 +93,7 @@ impl CudaGaugeTheory {
     ) -> PyResult<Bound<'py, PyArray2<u32>>> {
         self.graph
             .get_plaquette_counts()
-            .map(|s| s.into_pyarray_bound(py))
+            .map(|s| s.into_pyarray(py))
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
     }
@@ -120,7 +120,7 @@ impl CudaGaugeTheory {
     ) -> PyResult<Option<Bound<'py, PyArray5<u32>>>> {
         self.graph
             .get_plaquette_pair_counts()
-            .map(|s| s.map(|s| s.into_pyarray_bound(py)))
+            .map(|s| s.map(|s| s.into_pyarray(py)))
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
     }
@@ -140,7 +140,7 @@ impl CudaGaugeTheory {
     fn get_graph_state<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray6<i32>>> {
         self.graph
             .get_plaquettes()
-            .map(|s| s.into_pyarray_bound(py))
+            .map(|s| s.into_pyarray(py))
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
     }
@@ -149,7 +149,7 @@ impl CudaGaugeTheory {
     fn get_edge_violations<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyArray6<i32>>> {
         self.graph
             .get_edge_violations()
-            .map(|s| s.clone().into_pyarray_bound(py).to_owned())
+            .map(|s| s.clone().into_pyarray(py).to_owned())
             .map_err(|x| x.to_string())
             .map_err(PyValueError::new_err)
     }

@@ -102,13 +102,13 @@ impl GaugeTheory {
 
     fn get_graph_state<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray5<i32>> {
         let graph = self.graph.clone_graph();
-        graph.into_pyarray_bound(py).to_owned()
+        graph.into_pyarray(py).to_owned()
     }
 
     fn get_winding_nums<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<i32>> {
         // sum t, x, y, z
         let sum = self.get_winding_num_native();
-        sum.into_pyarray_bound(py).to_owned()
+        sum.into_pyarray(py).to_owned()
     }
 
     #[pyo3(signature = (num_steps, local_updates_per_step=None))]
@@ -134,10 +134,8 @@ impl GaugeTheory {
                     *s += w.pow(2) as f64;
                 });
         }
-        sum_squares
-            .iter_mut()
-            .for_each(|s| *s /= num_steps as f64);
-        sum_squares.into_pyarray_bound(py).to_owned()
+        sum_squares.iter_mut().for_each(|s| *s /= num_steps as f64);
+        sum_squares.into_pyarray(py).to_owned()
     }
 }
 
@@ -159,11 +157,9 @@ impl GaugeTheory {
             bounds.x * bounds.z,
             bounds.y * bounds.z,
         ];
-        sum.iter_mut()
-            .zip(plane_sizes)
-            .for_each(|(s, n)| {
-                *s /= n as i32;
-            });
+        sum.iter_mut().zip(plane_sizes).for_each(|(s, n)| {
+            *s /= n as i32;
+        });
         sum
     }
 }
